@@ -1,0 +1,167 @@
+---
+title: "01_data"
+author: "Sglatt"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Github
+```{r git, eval=FALSE}
+usethis::create_from_github("https://github.com/Sfglatt/plf-telehealth-eval.git",
+  destdir = "~/Github/plf-telehealth-eval"
+)
+```
+
+```{r packages}
+if (!require("dplyr")) {
+  install.packages("dplyr")
+  require("dplyr")
+}
+if (!require("psych")) {
+  install.packages("psych")
+  require("psych")
+}
+if (!require("readxl")) {
+  install.packages("readxl")
+  require("readxl")
+}
+if (!require("stringr")) {
+  install.packages("stringr")
+  require("stringr")
+}
+if (!require("tidyverse")) {
+  install.packages("tidyverse")
+  require("tidyverse")
+}
+```
+
+```{r folder to save output}
+if (!dir.exists("01_Output")) {
+  dir.create("01_Output")
+}
+```
+
+```{r Data}
+# Raw data in separate tabs
+path <- "~/Labs/Github/project-life-force/project-life-force/Raw_datasets/database_12-29-2024.xlsx"
+excel_sheets(path)
+
+# This tab has lifetime SA information. Month = -9 is lifetime.
+csrss <- read_excel(path, sheet = "cssrs")
+
+# Make a variable for C-SSRS month = -9
+csrss <- csrss %>%
+  group_by(id) %>%
+  mutate(q11_CSSRS_lifetime = q11[month == -9]) %>%
+  ungroup()
+
+# Recode No (2) as 0
+csrss <- csrss %>%
+  mutate(q11_CSSRS_lifetime = ifelse(q11_CSSRS_lifetime == 2, 0, q11_CSSRS_lifetime))
+
+# This tab has sessions data
+sessions <- read_excel(path, sheet = "sessions")
+colnames(sessions) <- gsub("\\s+", "_", colnames(sessions))
+
+# Verify the number of participants
+length(unique(sessions$id)) # N = 101
+
+# Make a 'total number of sessions attended' variable.
+# Add up the number of dates they attended.
+sessions <- sessions %>%
+  group_by(id) %>%
+  mutate(n_attended = if_else(arm == 1, sum(!is.na(date)), NA))
+
+# Make a "treatment engaged" and "treatment completed" variables based on the number of sessions they attended
+sessions$initiated <- ifelse(sessions$n_attended > 0, 1, 0)
+sessions$six_sess <- ifelse(sessions$n_attended > 5, 1, 0)
+sessions$completer <- ifelse(sessions$n_attended >= 10, 1, 0)
+
+# Look at modality
+table(unique(sessions[c("id", "type")])$type)
+
+# 1	In-person (n = 22)
+# 2	Telehealth (n = 44)
+# 3	Both (n = 4)
+# People who attended 0 sessions are not coded
+
+# Make another modality type variable with "both" included in "telehealth"
+sessions$type_new <- sessions$type
+sessions$type_new[sessions$type_new == 3] <- 2
+sessions$type_new[sessions$type_new == 1] <- 0
+sessions$type_new[sessions$type_new == 2] <- 1
+
+# Replace NA (i.e., missing type) with 0 for non-attenders - for both the original site and site_new
+sessions$type_NA <- sessions$type
+sessions$type_NA[is.na(sessions$type)] <- 0
+
+sessions$type_new_NA <- sessions$type_new
+sessions$type_new_NA[is.na(sessions$type_new)] <- 0
+
+# Confirm the changes
+table(unique(sessions[c("id", "type_new")])$type_new)
+table(unique(sessions[c("id", "type_new_NA")])$type_new_NA)
+```
+
+```{r self-report}
+# Combined self-report data
+plf_data <- read.csv("~/Labs/Github/project-life-force/project-life-force/01_Created_datasets/Merged_plf_data_filtered_2025-04-09.csv")
+
+# Look at site n's
+table(plf_data[plf_data$month == 0, ]$site)
+
+# Combine Northport (n = 2) and Bronx participants for site
+plf_data <- plf_data %>%
+  group_by(id) %>%
+  tidyr::fill(site, .direction = "downup") %>%
+  ungroup()
+
+plf_data <- plf_data %>%
+  mutate(
+    site_new = site,
+    site_new = ifelse(site_new == 2, 1, site_new)
+  )
+
+# Confirm
+table(plf_data[plf_data$month == 0, ]$site)
+table(plf_data[plf_data$month == 0, ]$site_new)
+
+# Make a labeled arm variable
+plf_data <- plf_data %>%
+  dplyr::mutate(arm_label = ifelse(arm_rec == 1, "PLF", "TAU"))
+
+# Add n_sessions_attended and modality_type_new
+plf_data$n_sessions_attended <- sessions$n_attended[match(plf_data$id, sessions$id)]
+plf_data$modality_type <- sessions$type[match(plf_data$id, sessions$id)]
+plf_data$modality_type_new <- sessions$type_new[match(plf_data$id, sessions$id)]
+plf_data$completer <- sessions$completer[match(plf_data$id, sessions$id)]
+plf_data$six_sess <- sessions$six_sess[match(plf_data$id, sessions$id)]
+plf_data$initiated <- sessions$initiated[match(plf_data$id, sessions$id)]
+
+# Add the lifetime C-SSRS
+plf_data$q11_CSSRS_lifetime <- csrss$q11_CSSRS_lifetime[match(plf_data$id, csrss$id)]
+
+# Filter the dataset to PLF and >0 sessions
+plf_data_filtered <- plf_data %>%
+  filter(
+    arm_label == "PLF",
+    n_sessions_attended > 0,
+    month != -9
+  )
+```
+
+# Save data
+
+```{r save, eval=FALSE}
+write.csv(
+  plf_data_filtered,
+  paste0("01_Output/treatment_data_sg_", Sys.Date(), ".csv")
+)
+# 2025-10-21: First filtered multi-wave data
+```
+
+

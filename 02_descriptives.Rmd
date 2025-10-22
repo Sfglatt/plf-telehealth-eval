@@ -1,0 +1,258 @@
+---
+title: "02_descriptives"
+author: "Sglatt"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages}
+if (!require("tidyr")) {
+  install.packages("tidyr")
+  require("tidyr")
+}
+if (!require("dplyr")) {
+  install.packages("dplyr")
+  require("dplyr")
+}
+if (!require("psych")) {
+  install.packages("psych")
+  require("psych")
+}
+if (!require("janitor")) {
+  install.packages("janitor")
+  require("janitor")
+}
+```
+
+```{r folder to save output}
+if (!dir.exists("02_Output")) {
+  dir.create("02_Output")
+}
+```
+
+# Data
+Created in 01_data.Rmd
+```{r data}
+plf_data_filtered <- read.csv("01_Output/treatment_data_sg_2025-10-21.csv")
+
+# Filter to pre and post treatment
+plf_data_treatment <- plf_data_filtered %>%
+  filter(month %in% c(0, 3))
+
+# Remove mixed-modal participants
+plf_data_treatment_sens <- plf_data_treatment %>%
+  filter(modality_type != 3)
+
+# Make a baseline dataset
+plf_data_baseline <- plf_data_filtered %>%
+  filter(month == 0)
+
+# Remove mixed-modal participants from baseline dataset
+plf_data_baseline_sens <- plf_data_baseline %>%
+  filter(modality_type != 3)
+```
+
+# Sample N descriptives
+```{r sample}
+# Type
+table(plf_data_baseline$modality_type)
+table(plf_data_baseline_sens$modality_type)
+
+# Site
+table(plf_data_baseline$site)
+
+# Type + Site
+table(
+  plf_data_baseline$site,
+  plf_data_baseline$modality_type
+)
+```
+
+# Data for people with mixed modality
+```{r mixed modality ids}
+plf_data_baseline_mixed <- plf_data_baseline %>%
+  filter(modality_type == 3)
+
+# Number of sessions
+table(
+  plf_data_baseline_mixed$id,
+  plf_data_baseline_mixed$n_sessions_attended
+)
+
+# Look at original sessions data for these folks
+path <- "~/Labs/Github/project-life-force/project-life-force/Raw_datasets/database_12-29-2024.xlsx"
+excel_sheets(path)
+
+sessions <- read_excel(path, sheet = "sessions")
+colnames(sessions) <- gsub("\\s+", "_", colnames(sessions))
+
+# Make the 'total number of sessions attended' variable.
+sessions <- sessions %>%
+  group_by(id) %>%
+  mutate(n_attended = if_else(arm == 1, sum(!is.na(date)), NA))
+
+# Filter to mixed-modal
+sessions_mixed <- sessions %>%
+  filter(id %in% c("BX-074", "BX-084", "BX-087", "BX-089"))
+sessions_mixed
+```
+
+# Continuous outcomes, descriptives per group and pre/post
+```{r descriptives}
+plf_data_treatment_descriptives <- plf_data_treatment_sens %>%
+  dplyr::select(
+    modality_type_new, month,
+    ssi,
+    srcs17, srcse, srcsi
+  )
+
+# Full sample tables
+plf_data_treatment_descriptives_tables <- psych::describeBy(
+  plf_data_treatment_descriptives[, -1],
+  plf_data_treatment_descriptives$month
+)
+month0_table_full <- plf_data_treatment_descriptives_tables$"0"
+month3_table_full <- plf_data_treatment_descriptives_tables$"3"
+
+# In person tables
+plf_data_treatment_descriptives_ip <- plf_data_treatment_descriptives %>%
+  filter(modality_type_new == 0)
+
+plf_data_treatment_descriptives_tables_ip <- psych::describeBy(
+  plf_data_treatment_descriptives_ip[, -1],
+  plf_data_treatment_descriptives_ip$month
+)
+month0_table_ip <- plf_data_treatment_descriptives_tables_ip$"0"
+month3_table_ip <- plf_data_treatment_descriptives_tables_ip$"3"
+
+# Telehealth tables
+plf_data_treatment_descriptives_th <- plf_data_treatment_descriptives %>%
+  filter(modality_type_new == 1)
+
+plf_data_treatment_descriptives_tables_th <- psych::describeBy(
+  plf_data_treatment_descriptives_th[, -1],
+  plf_data_treatment_descriptives_th$month
+)
+month0_table_th <- plf_data_treatment_descriptives_tables_th$"0"
+month3_table_th <- plf_data_treatment_descriptives_tables_th$"3"
+month0_table_th
+
+# Just keep N and M (SD)
+clean_describe_table <- function(describe_table) {
+  describe_table %>%
+    slice(-1) %>%
+    select(n, mean, sd, skew, kurtosis) %>%
+    mutate(`Mean (SD)` = sprintf("%.2f (%.2f)", mean, sd)) %>%
+    select(n, `Mean (SD)`) %>%
+    `class<-`("data.frame")
+}
+
+# Clean full sample tables
+month0_table_full_clean <- clean_describe_table(month0_table_full)
+month3_table_full_clean <- clean_describe_table(month3_table_full)
+
+# Clean in-person tables
+month0_table_ip_clean <- clean_describe_table(month0_table_ip)
+month3_table_ip_clean <- clean_describe_table(month3_table_ip)
+
+# Clean telehealth tables
+month0_table_th_clean <- clean_describe_table(month0_table_th)
+month3_table_th_clean <- clean_describe_table(month3_table_th)
+
+# Combine pre and post
+prepost_full <- cbind(month0_table_full_clean, month3_table_full_clean)
+prepost_ip <- cbind(month0_table_ip_clean, month3_table_ip_clean)
+prepost_th <- cbind(month0_table_th_clean, month3_table_th_clean)
+
+# Combine full and modalities
+prepost_all <- cbind(prepost_full, prepost_ip, prepost_th)
+prepost_all 
+# First 2 columns are full sample pre and post, second 2 are in-person pre and post, third 2 are telehealth
+
+# Look at it
+prepost_all
+
+# Save table
+write.csv(prepost_all,
+  file = paste0(
+    "02_Output/pre_post_descriptives_sg_",
+    format(Sys.Date(), "%Y-%m-%d"),
+    ".csv"
+  )
+)
+```
+
+# Cross-tabulation of lifetime suicide attempt history
+```{r lifetime attempt}
+Table_1 <- plf_data_baseline_sens %>%
+  tabyl(q11_CSSRS_lifetime, modality_type) %>%
+  adorn_totals(where = c("row", "col")) %>%
+  adorn_percentages("col") %>%
+  adorn_pct_formatting(digits = 1) %>%
+  adorn_ns()
+
+Table_1
+```
+
+# Chi and Fisher's exact test between lifetime suicide attempt and modality 
+```{r lifetime attempt chi 1}
+chi_square_result_1 <- chisq.test(
+  plf_data_baseline_sens$q11_CSSRS_lifetime,
+  plf_data_baseline_sens$modality_type_new
+)
+fisher_result_1 <- fisher.test(
+  plf_data_baseline_sens$q11_CSSRS_lifetime,
+  plf_data_baseline_sens$modality_type_new
+)
+
+# Look at the actual and expected frequencies
+sjPlot::tab_xtab(
+  var.row = plf_data_baseline_sens$q11_CSSRS_lifetime,
+  var.col = plf_data_baseline_sens$modality_type_new,
+  title = "Contingency Table",
+  show.row.prc = TRUE,
+  show.col.prc = TRUE,
+  show.summary = TRUE,
+  statistics = "pearson",
+  show.exp = TRUE,
+  show.legend = TRUE
+)
+
+report::report(chi_square_result_1)
+```
+
+# Covariates
+```{r covariates}
+# Descriptives and t-tests for the Beck Depression Inventory, Beck Hopelessness Scale, Beck Scale for Suicidal Ideation, Interpersonal Needs Questionnaire, Suicide-Related Coping Scale
+
+# Isolate data
+covariates <- plf_data_baseline_sens %>%
+  dplyr::select(
+    modality_type_new,
+    bdi, bhs, ssi, inq_pb, inq_tb, srcs17,
+    Number_MH_encounters,
+    age_demo
+  )
+
+# Look at descriptive tables
+covariates <- psych::describeBy(covariates[, -1], covariates$modality_type_new)
+in_person_table <- covariates$"0"
+telehealth_table <- covariates$"1"
+
+in_person_table
+telehealth_table
+
+# t-tests
+t_test_covariates <- plf_data_baseline_sens %>%
+  rempsyc::nice_t_test(
+    response = c("ssi", "bdi", "bhs", "inq_tb", "inq_pb", "srcs17", "bpaqpa", "bpaqva", "Number_MH_encounters", "age_demo"),
+    group = "modality_type_new"
+  )
+
+t_test_covariates
+```
+
