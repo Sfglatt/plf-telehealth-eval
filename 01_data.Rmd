@@ -154,6 +154,102 @@ plf_data_filtered <- plf_data %>%
   )
 ```
 
+# How many total were randomzed to telehealth/in-person/both
+```{r numbers}
+# How many don't have a modality logged 
+unique(sessions$id[is.na(sessions$type) | sessions$type == ""]) # 31
+
+# Look at their data
+sessions[is.na(sessions$type) | sessions$type == "", ]
+
+# Look at their date of consent
+dates <- read_excel(path, sheet = "status")
+# dtcon, dtcm00
+
+# Look at the data for people who are missing modality type
+missing_modality_ids <- unique(sessions$id[is.na(sessions$type) | sessions$type == ""])
+dates[dates$id %in% missing_modality_ids, ]
+
+# The breakdown in the sessions data
+table(plf_data[plf_data$arm_rec == 1 & plf_data$month == 0,]$modality_type)
+
+# The breakdown in the dates data
+table(dates[dates$arm == 1,]$tele)
+
+# From this dates data, include people who initiated treatment
+dates_initiated <- dates %>%
+  filter(id %in% sessions$id[sessions$initiated == 1])
+view(dates_initiated)
+
+# The breakdown in the dates data
+table(dates_initiated$arm, dates_initiated$tele)
+
+# Check that they concord
+common_ids <- intersect(dates$id, sessions$id)
+dates_sub <- dates[dates$id %in% common_ids, c("id", "tele")]
+sessions_sub <- sessions[sessions$id %in% common_ids, c("id", "type")]
+comparison <- merge(dates_sub, sessions_sub, by = "id")
+all_match <- all(comparison$tele == comparison$type)
+mismatched_ids <- comparison$id[comparison$tele != comparison$type]
+
+# There is one person characterized as mixed in the "status" tab and "in-person" in the sessions tab. Check who:
+intersect(
+  dates$id[dates$tele == "3"],
+  sessions$id[sessions$type == "1"]
+)
+
+# 083. Look at their data in the sessions vs dates tab
+sessions[sessions$id == "BX-083", ]
+dates[dates$id == "BX-083", ]
+# MG resolution: this person is in-person
+
+# From this dates data, exclude people who initiated treatment
+dates_exclude <- dates %>%
+  filter(id %in% sessions$id[sessions$n_attended == 0])
+
+# The breakdown in the dates data
+table(dates_exclude$arm, dates_exclude$tele)
+
+# Who is mixed in the tele variable here?
+dates_exclude$id[dates_exclude$tele == "3"] # BX-085
+# Look at their data
+sessions[sessions$id == "BX-085", ]
+dates[dates$id == "BX-085", ]
+# They were randomized to in-person (Jan 2020), but never attended any sessions. 
+
+# Make their tele 3 to 1 in the full dates data, and do the same for "083" above
+dates$tele[dates$id == "BX-085"] <- "1"
+dates$tele[dates$id == "BX-083"] <- "1"
+```
+
+# Chi-square between n_attended (0 vs >0) and modality (1 vs 2; 3 should be 1)
+
+```{r chi sq attend mode}
+# Chi-square between n_attended (0 vs >0) and modality (1 vs 2; 3 should be 1)
+dates$initiated <- ifelse(dates$id %in% sessions$id[sessions$n_attended > 0], 1, 0)
+dates$tele_binary <- ifelse(dates$tele == "1", 1,
+                            ifelse(dates$tele == "2", 2,
+                                   ifelse(dates$tele == "3", 1, NA))) # "mixed" were assigned in-person
+
+chi_square_result <- chisq.test(dates[dates$arm == 1,]$initiated, dates[dates$arm == 1,]$tele_binary, correct = FALSE)
+chi_square_result
+report::report(chi_square_result)
+
+# Table
+sjPlot::tab_xtab(
+  var.row = dates[dates$arm == 1,]$initiated,
+  var.col = dates[dates$arm == 1,]$tele_binary,
+  title = "Contingency table of Treatment Initiation by Modality Type",
+  show.row.prc = TRUE,
+  show.col.prc = TRUE,
+  show.summary = TRUE,
+  statistics = "pearson",
+  show.exp = TRUE,
+  show.legend = TRUE,
+  file = paste0("01_Output/Contingency_initiation_modality_", Sys.Date(), ".doc")
+)
+```
+
 # Save data
 
 ```{r save, eval=FALSE}

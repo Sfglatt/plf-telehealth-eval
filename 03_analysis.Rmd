@@ -76,6 +76,9 @@ plf_data_baseline <- plf_data_treatment %>%
 
 plf_data_baseline_sens <- plf_data_baseline %>%
   filter(modality_type != 3)
+
+# Confirm
+table(plf_data_baseline$modality_type_new_f)
 ```
 
 # Did session attendance differ by modality?
@@ -300,42 +303,47 @@ tab_model(
 )
 ```
 
-# Include mixed-modal participants
-```{r mlm sens}
-src_model_2 <- lmer(srcs17 ~
-  month:modality_type_new_f +
-  month +
-  modality_type_new_f +
-  site_new_f +
-  ssi +
-  (1 | id), data = plf_data_treatment)
+# Recode so that TH = 0
+```{r mlms reverse}
+plf_data_treatment_sens$modality_rev <- ifelse(plf_data_treatment_sens$modality_type_new_f == 0, 1, 0)
+table(plf_data_treatment_sens$modality_rev)
+table(plf_data_treatment_sens$modality_type_new_f)
 
-srce_model_2 <- lmer(srcse ~
-  month:modality_type_new_f +
-  month +
-  modality_type_new_f +
-  site_new_f +
-  ssi +
-  (1 | id), data = plf_data_treatment)
 
-srci_model_2 <- lmer(srcsi ~
-  month:modality_type_new_f +
+src_model_1 <- lmer(srcs17 ~
+  month:modality_rev +
   month +
-  modality_type_new_f +
+  modality_rev +
   site_new_f +
   ssi +
-  (1 | id), data = plf_data_treatment)
+  (1 | id), data = plf_data_treatment_sens)
+
+srce_model_1 <- lmer(srcse ~
+  month:modality_rev +
+  month +
+  modality_rev +
+  site_new_f +
+  ssi +
+  (1 | id), data = plf_data_treatment_sens)
+
+srci_model_1 <- lmer(srcsi ~
+  month:modality_rev +
+  month +
+  modality_rev +
+  site_new_f +
+  ssi +
+  (1 | id), data = plf_data_treatment_sens)
 
 # Results
-summary(src_model_2)
-summary(srce_model_2)
-summary(srci_model_2)
+summary(src_model_1)
+summary(srce_model_1)
+summary(srci_model_1)
 
 # Results table
 tab_model(
-  src_model_2,
-  srce_model_2,
-  srci_model_2
+  src_model_1,
+  srce_model_1,
+  srci_model_1
 )
 ```
 
