@@ -11,10 +11,6 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Packages
 ```{r packages}
-if (!require("report")) {
-  install.packages("report")
-  require("report")
-}
 if (!require("lme4")) {
   install.packages("lme4")
   require("lme4")
@@ -43,6 +39,15 @@ if (!require("tidyverse")) {
   install.packages("tidyverse")
   require("tidyverse")
 }
+if (!require("emmeans")) {
+  install.packages("emmeans")
+  require("emmeans")
+}
+if (!require("showtext")) {
+  install.packages("showtext")
+  require("showtext")
+}
+showtext_auto()
 ```
 
 ```{r folder to save output}
@@ -55,22 +60,20 @@ if (!dir.exists("03_Output")) {
 Created in 01_data.Rmd
 ```{r data}
 # Continuous outcomes data
-plf_data_filtered <- read.csv("01_Output/treatment_data_sg_2025-10-21.csv")
+plf_data_filtered <- read.csv("01_Output/treatment_data_sg_2025-12-15.csv")
 
-# Filter outcomes data to pre and post treatment
+# Filter outcomes data to pre and post treatment (remove -9)
 plf_data_treatment <- plf_data_filtered %>%
   filter(month %in% c(0, 3, 6, 12))
 
-# Prep variables
-plf_data_treatment$site_new_f <- as.factor(plf_data_treatment$site_new)
-plf_data_treatment$modality_type_new_f <- as.factor(plf_data_treatment$modality_type_new)
-plf_data_treatment$month <- as.factor(plf_data_treatment$month)
+# Look at modality n's
+table(plf_data_treatment[plf_data_treatment$month == 0, ]$modality_type)
 
 # Exclude multi-modal participants
 plf_data_treatment_sens <- plf_data_treatment %>%
   filter(modality_type != 3)
 
-# + make a baseline dataset
+# Make a baseline dataset
 plf_data_baseline <- plf_data_treatment %>%
   filter(month == 0)
 
@@ -78,7 +81,27 @@ plf_data_baseline_sens <- plf_data_baseline %>%
   filter(modality_type != 3)
 
 # Confirm
-table(plf_data_baseline$modality_type_new_f)
+table(plf_data_baseline$modality_type_new)
+```
+
+# Make MLM vars
+```{r mlms vars}
+plf_data_treatment_sens <- plf_data_treatment_sens %>%
+  mutate(
+    modality_type_new_f = as.factor(modality_type_new), # convert original to factor
+    modality_f = factor(modality_type_new_f, levels = c(0, 1), labels = c("In-person", "Telehealth")),
+    month_f = factor(month, levels = c(0, 3, 6, 12)),
+    site_new_f = as.factor(site_new)
+  )
+
+# Make a baseline SI variable
+ssi_bl <- plf_data_treatment %>%
+  filter(month == 0) %>%
+  dplyr::select(id, ssi)
+
+# Add baseline SI to all data
+plf_data_treatment_sens <- plf_data_treatment_sens %>%
+  left_join(ssi_bl, by = "id", suffix = c("", "_bl"))
 ```
 
 # Did session attendance differ by modality?
@@ -91,67 +114,20 @@ sd(plf_data_baseline_sens[plf_data_baseline_sens$modality_type_new == 0, ]$n_ses
 summary(plf_data_baseline_sens[plf_data_baseline_sens$modality_type_new == 1, ]$n_sessions_attended)
 sd(plf_data_baseline_sens[plf_data_baseline_sens$modality_type_new == 1, ]$n_sessions_attended)
 
-# comparison
+# Comparison
 wilcox.test(n_sessions_attended ~ modality_type_new, data = plf_data_baseline_sens)
+
+# R&R, add range and IQR
+plf_data_baseline_sens %>%
+  group_by(modality_type_new) %>%
+  summarise(
+    n = n(),
+    median_sessions = median(n_sessions_attended, na.rm = TRUE),
+    IQR_sessions = IQR(n_sessions_attended, na.rm = TRUE)
+  )
 ```
 
-# Did number of treatment engagers differ by modality?
-```{r engage rates}
-table(
-  plf_data_baseline_sens$six_sess,
-  plf_data_baseline_sens$modality_type_new
-)
-
-chi_square_result_1 <- chisq.test(
-  plf_data_baseline_sens$six_sess,
-  plf_data_baseline_sens$modality_type_new
-)
-
-fisher_result_1 <- fisher.test(
-  plf_data_baseline_sens$six_sess,
-  plf_data_baseline_sens$modality_type_new
-)
-
-report(chi_square_result_1)
-fisher_result_1
-```
-
-# Did number of treatment completers differ by modality?
-```{r complete rates}
-table(
-  plf_data_baseline_sens$completer,
-  plf_data_baseline_sens$modality_type_new
-)
-
-chi_square_result_2 <- chisq.test(plf_data_baseline_sens$completer, plf_data_baseline_sens$modality_type_new)
-fisher_result_2 <- fisher.test(plf_data_baseline_sens$completer, plf_data_baseline_sens$modality_type_new)
-
-report(chi_square_result_2)
-fisher_result_2
-```
-
-# Sensitivity including mixed-modality participants
-```{r sens rates}
-# Engagers by modality
-table(plf_data_baseline$six_sess, plf_data_baseline$modality_type_new)
-
-chi_square_result_3 <- chisq.test(plf_data_baseline$six_sess, plf_data_baseline$modality_type_new)
-fisher_result_3 <- fisher.test(plf_data_baseline$six_sess, plf_data_baseline$modality_type_new)
-
-report(chi_square_result_3)
-fisher_result_3
-
-# Completers by modality
-table(plf_data_baseline$completer, plf_data_baseline$modality_type_new)
-
-chi_square_result_4 <- chisq.test(plf_data_baseline$completer, plf_data_baseline$modality_type_new)
-fisher_result_4 <- fisher.test(plf_data_baseline$completer, plf_data_baseline$modality_type_new)
-
-report(chi_square_result_4)
-fisher_result_4
-```
-
-# Was there within-group improvements in suicide-related coping?
+# Were there within-group improvements in suicide-related coping?
 ```{r within group}
 # Make data wide for paired t tests
 plf_data_treatment_sens_wide <- plf_data_treatment_sens %>%
@@ -263,87 +239,138 @@ paired_change_TH
 paired_change_full
 ```
 
-# Mixed models
-With SSI as a covariate (see 02_descriptives.Rmd)
-```{r mlms}
-src_model_1 <- lmer(srcs17 ~
-  month:modality_type_new_f +
-  month +
-  modality_type_new_f +
-  site_new_f +
-  ssi +
-  (1 | id), data = plf_data_treatment_sens)
+# Multilevel models with orthogonal polynomial contrasts for time
+# Test cubic effects in both groups separately
+```{r test cubic time}
+src_model_cubic_ip <- lmer(
+  srcs17 ~ poly(as.numeric(month), 3) +
+    poly(as.numeric(month), 3) * ssi_bl +
+    site_new_f +
+    (1 | id),
+  data = subset(plf_data_treatment_sens, modality_f == "In-person")
+)
 
-srce_model_1 <- lmer(srcse ~
-  month:modality_type_new_f +
-  month +
-  modality_type_new_f +
-  site_new_f +
-  ssi +
-  (1 | id), data = plf_data_treatment_sens)
+src_model_cubic_th <- lmer(
+  srcs17 ~ poly(as.numeric(month), 3) +
+    poly(as.numeric(month), 3) * ssi_bl +
+    site_new_f +
+    (1 | id),
+  data = subset(plf_data_treatment_sens, modality_f == "Telehealth")
+)
 
-srci_model_1 <- lmer(srcsi ~
-  month:modality_type_new_f +
-  month +
-  modality_type_new_f +
-  site_new_f +
-  ssi +
-  (1 | id), data = plf_data_treatment_sens)
-
-# Results
-summary(src_model_1)
-summary(srce_model_1)
-summary(srci_model_1)
-
-# Results table
 tab_model(
-  src_model_1,
-  srce_model_1,
-  srci_model_1
+  src_model_cubic_ip,
+  src_model_cubic_th
 )
 ```
 
-# Recode so that TH = 0
-```{r mlms reverse}
-plf_data_treatment_sens$modality_rev <- ifelse(plf_data_treatment_sens$modality_type_new_f == 0, 1, 0)
-table(plf_data_treatment_sens$modality_rev)
-table(plf_data_treatment_sens$modality_type_new_f)
+# Primary models
+```{r mlms orthogonal}
+# plf_data_treatment_sens$month_factor <- factor(plf_data_treatment_sens$month, ordered = TRUE)
+# contrasts(plf_data_treatment_sens$month_factor) <- contr.poly(length(unique(plf_data_treatment_sens$month_factor)))
 
-
-src_model_1 <- lmer(srcs17 ~
-  month:modality_rev +
-  month +
-  modality_rev +
-  site_new_f +
-  ssi +
-  (1 | id), data = plf_data_treatment_sens)
-
-srce_model_1 <- lmer(srcse ~
-  month:modality_rev +
-  month +
-  modality_rev +
-  site_new_f +
-  ssi +
-  (1 | id), data = plf_data_treatment_sens)
-
-srci_model_1 <- lmer(srcsi ~
-  month:modality_rev +
-  month +
-  modality_rev +
-  site_new_f +
-  ssi +
-  (1 | id), data = plf_data_treatment_sens)
-
-# Results
-summary(src_model_1)
-summary(srce_model_1)
-summary(srci_model_1)
-
-# Results table
-tab_model(
-  src_model_1,
-  srce_model_1,
-  srci_model_1
+# Include linear + quadratic only (not cubic)
+src_model_xcubic <- lmer(
+  srcs17 ~ poly(as.numeric(month), 2) * modality_f + # Linear and quadratic
+    poly(as.numeric(month), 2) * ssi_bl + # interact polynomial terms with baseline SI
+    site_new_f +
+    (1 | id),
+  data = plf_data_treatment_sens
 )
+
+summary(src_model_xcubic)
+tab_model(src_model_xcubic) # first degree (1) = linear, second degree  (2) = quadradic
+
+srce_model_xcubic <- lmer(
+  srcse ~ poly(as.numeric(month), 2) * modality_f +
+    poly(as.numeric(month), 2) * ssi_bl +
+    site_new_f +
+    (1 | id),
+  data = plf_data_treatment_sens
+)
+
+summary(srce_model_xcubic)
+tab_model(srce_model_xcubic)
+
+srci_model_xcubic <- lmer(
+  srcsi ~ poly(as.numeric(month), 2) * modality_f +
+    poly(as.numeric(month), 2) * ssi_bl +
+    site_new_f +
+    (1 | id),
+  data = plf_data_treatment_sens
+)
+
+summary(srci_model_xcubic)
+tab_model(srci_model_xcubic)
+
+tab_model(
+  src_model_xcubic,
+  srce_model_xcubic,
+  srci_model_xcubic
+)
+# In this table,first degree (1) = linear, second degree  (2) = quadradic
 ```
 
+# Model visualizations
+Estimated marginal means
+```{r emm vis}
+time_points <- c(0, 3, 6, 12)
+
+# quick function
+get_preds <- function(model, outcome_name) {
+  emms <- emmeans(model, ~ modality_f | month, at = list(month = time_points))
+  df <- as.data.frame(emms)
+  df$outcome <- outcome_name
+  df
+}
+
+# Get predictions for each outcome
+pred_srcs17 <- get_preds(src_model_xcubic, "Total")
+pred_srce <- get_preds(srce_model_xcubic, "External")
+pred_srci <- get_preds(srci_model_xcubic, "Internal")
+pred_all <- bind_rows(pred_srcs17, pred_srce, pred_srci) # Combine
+pred_all$outcome <- factor(pred_all$outcome, levels = c("Total", "External", "Internal"))
+
+# Plot
+ggplot(pred_all, aes(x = month, y = emmean, color = modality_f, group = modality_f)) +
+  geom_line(size = 1) +
+  geom_ribbon(aes(ymin = lower.CL, ymax = upper.CL, fill = modality_f), alpha = 0.2, color = NA) +
+  facet_wrap(~outcome, scales = "free_y", nrow = 1) +
+  labs(x = "Month", y = "Estimated Score", color = "Modality", fill = "Modality") +
+  theme_minimal(base_size = 14, base_family = "serif") +
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(face = "bold", family = "serif")
+  )
+```
+
+# Raw data vis
+```{r visualize raw}
+# Reformat data
+sr_raw <- plf_data_treatment_sens %>%
+  dplyr::select(id, month, modality_f, srcs17, srcse, srcsi) %>%
+  pivot_longer(
+    cols = c(srcs17, srcse, srcsi),
+    names_to = "outcome",
+    values_to = "score"
+  ) %>%
+  mutate(
+    month = factor(month, levels = c(0, 3, 6, 12)),
+    outcome = factor(outcome,
+      levels = c("srcs17", "srcse", "srcsi"),
+      labels = c("Total", "External", "Internal")
+    )
+  )
+
+# Plot
+ggplot(sr_raw, aes(x = month, y = score, color = modality_f, group = modality_f)) +
+  stat_summary(fun = mean, geom = "line", size = 1) +
+  stat_summary(fun.data = mean_se, geom = "ribbon", alpha = 0.2, aes(fill = modality_f), color = NA) +
+  facet_wrap(~outcome, scales = "free_y", nrow = 1) +
+  labs(x = "Month", y = "Observed Score", color = "Modality", fill = "Modality") +
+  theme_minimal(base_size = 14, base_family = "serif") +
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(face = "bold", family = "serif")
+  )
+```
