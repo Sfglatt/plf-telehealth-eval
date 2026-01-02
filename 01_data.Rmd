@@ -95,7 +95,7 @@ sessions$type_new[sessions$type_new == 3] <- 2
 sessions$type_new[sessions$type_new == 1] <- 0
 sessions$type_new[sessions$type_new == 2] <- 1
 
-# Replace NA (i.e., missing type) with 0 for non-attenders - for both the original site and site_new
+# Replace NA (i.e., missing type) with 0 for non-attenders (for both the original site and site_new)
 sessions$type_NA <- sessions$type
 sessions$type_NA[is.na(sessions$type)] <- 0
 
@@ -114,7 +114,7 @@ plf_data <- read.csv("~/Labs/Github/project-life-force/project-life-force/01_Cre
 # Look at site n's
 table(plf_data[plf_data$month == 0, ]$site)
 
-# Combine Northport (n = 2) and Bronx participants for site
+# Combine Northport (n = 2) and Bronx participants
 plf_data <- plf_data %>%
   group_by(id) %>%
   tidyr::fill(site, .direction = "downup") %>%
@@ -156,7 +156,7 @@ plf_data_filtered <- plf_data %>%
 
 # How many total were randomzed to telehealth/in-person/both
 ```{r numbers}
-# How many don't have a modality logged 
+# How many don't have a modality logged
 unique(sessions$id[is.na(sessions$type) | sessions$type == ""]) # 31
 
 # Look at their data
@@ -171,10 +171,10 @@ missing_modality_ids <- unique(sessions$id[is.na(sessions$type) | sessions$type 
 dates[dates$id %in% missing_modality_ids, ]
 
 # The breakdown in the sessions data
-table(plf_data[plf_data$arm_rec == 1 & plf_data$month == 0,]$modality_type)
+table(plf_data[plf_data$arm_rec == 1 & plf_data$month == 0, ]$modality_type)
 
 # The breakdown in the dates data
-table(dates[dates$arm == 1,]$tele)
+table(dates[dates$arm == 1, ]$tele)
 
 # From this dates data, include people who initiated treatment
 dates_initiated <- dates %>%
@@ -215,49 +215,56 @@ dates_exclude$id[dates_exclude$tele == "3"] # BX-085
 # Look at their data
 sessions[sessions$id == "BX-085", ]
 dates[dates$id == "BX-085", ]
-# They were randomized to in-person (Jan 2020), but never attended any sessions. 
+# They were randomized to in-person (Jan 2020), but never attended any sessions.
 
 # Make their tele 3 to 1 in the full dates data, and do the same for "083" above
 dates$tele[dates$id == "BX-085"] <- "1"
 dates$tele[dates$id == "BX-083"] <- "1"
 ```
 
-# Chi-square between n_attended (0 vs >0) and modality (1 vs 2; 3 should be 1)
-
-```{r chi sq attend mode}
-# Chi-square between n_attended (0 vs >0) and modality (1 vs 2; 3 should be 1)
-dates$initiated <- ifelse(dates$id %in% sessions$id[sessions$n_attended > 0], 1, 0)
-dates$tele_binary <- ifelse(dates$tele == "1", 1,
-                            ifelse(dates$tele == "2", 2,
-                                   ifelse(dates$tele == "3", 1, NA))) # "mixed" were assigned in-person
-
-chi_square_result <- chisq.test(dates[dates$arm == 1,]$initiated, dates[dates$arm == 1,]$tele_binary, correct = FALSE)
-chi_square_result
-report::report(chi_square_result)
-
-# Table
-sjPlot::tab_xtab(
-  var.row = dates[dates$arm == 1,]$initiated,
-  var.col = dates[dates$arm == 1,]$tele_binary,
-  title = "Contingency table of Treatment Initiation by Modality Type",
-  show.row.prc = TRUE,
-  show.col.prc = TRUE,
-  show.summary = TRUE,
-  statistics = "pearson",
-  show.exp = TRUE,
-  show.legend = TRUE,
-  file = paste0("01_Output/Contingency_initiation_modality_", Sys.Date(), ".doc")
-)
-```
-
-# Save data
-
-```{r save, eval=FALSE}
+# Save data for MLMs
+```{r save mlm data, eval=FALSE}
 write.csv(
   plf_data_filtered,
   paste0("01_Output/treatment_data_sg_", Sys.Date(), ".csv")
 )
 # 2025-10-21: First filtered multi-wave data
+# 2025-12-15: Add C-SSRS
 ```
 
+# Save data for ITT engagement/initiation
+```{r save itt data, eval=FALSE}
+# From the dates sheet, make a modality assignment variable
+dates <- dates %>%
+  mutate(
+    modality_assign = case_when(
+      tele == "1" ~ 0, # in-person
+      tele == "2" ~ 1, # telehealth
+      tele == "3" ~ 0, # in person and shifted to telehealth - in person for ITT
+    )
+  )
+
+table(dates$modality_assign, useNA = "ifany")
+
+# Merge modality assignment (ITT) into the dataset
+plf_data <- plf_data %>%
+  left_join(
+    dates %>% dplyr::select(id, modality_assign),
+    by = "id"
+  )
+
+# Filter to baseline and the PLF arm
+plf_data_m0_plf <- plf_data %>%
+  dplyr::filter(month == 0, arm_rec == 1)
+
+# Look/confirm N's
+table(plf_data_m0_plf$modality_assign, useNA = "ifany") # 0 = telehealth, 46; 1 = in-person, 55
+
+# Save data
+write.csv(
+  plf_data_m0_plf,
+  paste0("01_Output/initiation_data_sg_", Sys.Date(), ".csv")
+)
+# 2026-01-02: First filtered ITT data for initation/engagement
+```
 
