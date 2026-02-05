@@ -47,11 +47,24 @@ if (!require("emmeans")) {
   install.packages("emmeans")
   require("emmeans")
 }
-if (!require("showtext")) {
-  install.packages("showtext")
-  require("showtext")
+
+# Cohen's d for familiar effect sizes from MLMs
+lme.dscore <- function(mod, data, type) {
+  if (type == "lme4") {
+    mod1 <- lmerTest::lmer(mod, data = data)
+    eff <- cbind(summary(mod1)$coefficients[, 4], summary(mod1)$coefficients[, 3])
+  }
+
+  if (type == "nlme") {
+    eff <- cbind(summary(mod)$tTable[, 4], summary(mod)$fixDF$terms)
+  }
+
+  colnames(eff) <- c("t", "df")
+  eff <- as.data.frame(eff)
+  eff$d <- (2 * eff$t) / sqrt(eff$df)
+  eff <- eff[-1, ]
+  return(eff)
 }
-showtext_auto()
 ```
 
 ```{r folder to save output}
@@ -113,8 +126,9 @@ plf_data_treatment_sens <- plf_data_treatment_sens %>%
   left_join(ssi_bl, by = "id", suffix = c("", "_bl"))
 ```
 
-# Did session attendance differ by modality?
-```{r attend compare}
+# Did treatment engagement differ by modality?
+## Raw comparisons
+```{r engage raw}
 # in-person session attendance
 summary(plf_data_baseline_sens[plf_data_baseline_sens$modality_type_new == 0, ]$n_sessions_attended)
 sd(plf_data_baseline_sens[plf_data_baseline_sens$modality_type_new == 0, ]$n_sessions_attended)
@@ -136,11 +150,112 @@ plf_data_baseline_sens %>%
   )
 ```
 
-# Were there within-group improvements in suicide-related coping?
+## Adjusted for ideation and site; modeled as predictors
+- In the full intent-to-treat sample so to not condition on treatment initiation 
+  [but we need to condition on initiation for engagement/completion outcomes, otherwise they are conflated]
+- Based on randomization assignment to in-person versus telehealth delivery; 
+  participants who transitioned modalities due to COVID-19 were classified according to their original assignment for ITT purposes. 
+```{r engage adjust}
+# Model treatment engagement and completion as ITT outcomes,
+# not a group descriptor
+
+# Initiation model (>0 sessions), ITT
+initiation_model_itt <- glm(
+  initiated ~ as.factor(modality_assign) + as.factor(site_new) + ssi,
+  data = plf_data_itt,
+  family = binomial
+)
+
+summary(initiation_model_itt)
+exp(cbind(
+  OR = coef(initiation_model_itt),
+  confint(initiation_model_itt)
+))
+
+# Engagement model (> 5 sessions) - ITT for revisions,
+# But also checking not ITT (or else inflated by initiation)
+engagement_model_itt <- glm(
+  six_sess ~ as.factor(modality_assign) + as.factor(site_new) + ssi,
+  data = plf_data_itt,
+  family = binomial
+)
+
+summary(engagement_model_itt)
+exp(cbind(
+  OR = coef(engagement_model_itt),
+  confint(engagement_model_itt)
+))
+
+engagement_model_mitt <- glm(
+  six_sess ~ as.factor(modality_f) + as.factor(site_new) + ssi_bl,
+  data = plf_data_treatment_sens[plf_data_treatment_sens$month == 0, ],
+  family = binomial
+)
+
+summary(engagement_model_mitt)
+exp(cbind(
+  OR = coef(engagement_model_mitt),
+  confint(engagement_model_mitt)
+))
+
+# Completion model (10+ sessions) - ITT for revisions,
+# But also checking not ITT (or else inflated by initiation)
+completion_model_itt <- glm(
+  completer ~ as.factor(modality_assign) + as.factor(site_new) + ssi,
+  data = plf_data_itt,
+  family = binomial
+)
+
+summary(completion_model_itt)
+exp(cbind(
+  OR = coef(completion_model_itt),
+  confint(completion_model_itt)
+))
+
+completion_model_mitt <- glm(
+  completer ~ as.factor(modality_f) + as.factor(site_new) + ssi_bl,
+  data = plf_data_treatment_sens[plf_data_treatment_sens$month == 0, ],
+  family = binomial
+)
+
+summary(completion_model_mitt)
+exp(cbind(
+  OR = coef(completion_model_mitt),
+  confint(completion_model_mitt)
+))
+
+# Session count model - ITT for revisions,
+# But also checking not ITT (or else inflated by initiation)
+
+# Check for overdispersion
+mean(plf_data_itt$n_sessions_attended, na.rm = TRUE)
+var(plf_data_itt$n_sessions_attended, na.rm = TRUE)
+# Variance is > mean, so use a negative binomial model
+
+attendance_model_itt <- glmmTMB(
+  n_sessions_attended ~ as.factor(modality_assign) + ssi + as.factor(site_new),
+  data = plf_data_itt,
+  family = nbinom2
+)
+
+summary(attendance_model_itt)
+
+attendance_model_mitt <- glmmTMB(
+  n_sessions_attended ~ as.factor(modality_f)
+    + as.factor(site_new)
+    + ssi_bl,
+  data = plf_data_treatment_sens[plf_data_treatment_sens$month == 0, ],
+  family = nbinom2
+)
+
+summary(attendance_model_mitt)
+```
+
+# Were there *within-group* improvements in suicide-related coping?
 ```{r within group}
 # Make data wide for paired t tests
 plf_data_treatment_sens_wide <- plf_data_treatment_sens %>%
-  filter(month %in% c(0, 3)) %>%
+  filter(month %in% c(0, 3, 6, 12)) %>%
   select(id, month, srcs17, srcse, srcsi, ssi, modality_type_new) %>%
   pivot_wider(
     names_from = month,
@@ -157,12 +272,36 @@ paired_change_IP <- jmv::ttestPS(
       i2 = "srcs17_month3"
     ),
     list(
+      i1 = "srcs17_month0",
+      i2 = "srcs17_month6"
+    ),
+    list(
+      i1 = "srcs17_month0",
+      i2 = "srcs17_month12"
+    ),
+    list(
       i1 = "srcse_month0",
       i2 = "srcse_month3"
     ),
     list(
+      i1 = "srcse_month0",
+      i2 = "srcse_month6"
+    ),
+    list(
+      i1 = "srcse_month0",
+      i2 = "srcse_month12"
+    ),
+    list(
       i1 = "srcsi_month0",
       i2 = "srcsi_month3"
+    ),
+    list(
+      i1 = "srcsi_month0",
+      i2 = "srcsi_month6"
+    ),
+    list(
+      i1 = "srcsi_month0",
+      i2 = "srcsi_month12"
     ),
     list(
       i1 = "ssi_month0",
@@ -187,12 +326,36 @@ paired_change_TH <- jmv::ttestPS(
       i2 = "srcs17_month3"
     ),
     list(
+      i1 = "srcs17_month0",
+      i2 = "srcs17_month6"
+    ),
+    list(
+      i1 = "srcs17_month0",
+      i2 = "srcs17_month12"
+    ),
+    list(
       i1 = "srcse_month0",
       i2 = "srcse_month3"
     ),
     list(
+      i1 = "srcse_month0",
+      i2 = "srcse_month6"
+    ),
+    list(
+      i1 = "srcse_month0",
+      i2 = "srcse_month12"
+    ),
+    list(
       i1 = "srcsi_month0",
       i2 = "srcsi_month3"
+    ),
+    list(
+      i1 = "srcsi_month0",
+      i2 = "srcsi_month6"
+    ),
+    list(
+      i1 = "srcsi_month0",
+      i2 = "srcsi_month12"
     ),
     list(
       i1 = "ssi_month0",
@@ -217,12 +380,36 @@ paired_change_full <- jmv::ttestPS(
       i2 = "srcs17_month3"
     ),
     list(
+      i1 = "srcs17_month0",
+      i2 = "srcs17_month6"
+    ),
+    list(
+      i1 = "srcs17_month0",
+      i2 = "srcs17_month12"
+    ),
+    list(
       i1 = "srcse_month0",
       i2 = "srcse_month3"
     ),
     list(
+      i1 = "srcse_month0",
+      i2 = "srcse_month6"
+    ),
+    list(
+      i1 = "srcse_month0",
+      i2 = "srcse_month12"
+    ),
+    list(
       i1 = "srcsi_month0",
       i2 = "srcsi_month3"
+    ),
+    list(
+      i1 = "srcsi_month0",
+      i2 = "srcsi_month6"
+    ),
+    list(
+      i1 = "srcsi_month0",
+      i2 = "srcsi_month12"
     ),
     list(
       i1 = "ssi_month0",
@@ -237,11 +424,10 @@ paired_change_full <- jmv::ttestPS(
   ciES = FALSE,
   desc = TRUE
 )
-
 # In-person
 paired_change_IP
 
-# Teleheath
+# Telehealth
 paired_change_TH
 
 # Full sample
@@ -316,8 +502,16 @@ tab_model(
   src_model_xcubic,
   srce_model_xcubic,
   srci_model_xcubic
-)
-# In this table,first degree (1) = linear, second degree  (2) = quadradic
+) # In this table,first degree (1) = linear, second degree  (2) = quadradic
+
+lme.dscore(src_model_xcubic, data = plf_data_treatment_sens, type = "lme4")
+lme.dscore(srce_model_xcubic, data = plf_data_treatment_sens, type = "lme4")
+lme.dscore(srci_model_xcubic, data = plf_data_treatment_sens, type = "lme4")
+
+# Save the models
+saveRDS(src_model_xcubic, file = "03_Output/src_model_xcubic.rds")
+saveRDS(srce_model_xcubic, file = "03_Output/srce_model_xcubic.rds")
+saveRDS(srci_model_xcubic, file = "03_Output/srci_model_xcubic.rds")
 ```
 
 Sensitivity models excluding the CTVCS site
@@ -364,152 +558,19 @@ tab_model(
   srce_model_xcubicxtx,
   srci_model_xcubicxtx
 )
+
+# Save the models
+saveRDS(src_model_xcubicxtx, file = "03_Output/src_model_xcubicxtx.rds")
+saveRDS(srce_model_xcubicxtx, file = "03_Output/srce_model_xcubicxtx.rds")
+saveRDS(srci_model_xcubicxtx, file = "03_Output/srci_model_xcubicxtx.rds")
 ```
 
-# Model visualizations
-Estimated marginal means
-```{r emm vis}
-time_points <- c(0, 3, 6, 12)
-
-# quick function
-get_preds <- function(model, outcome_name) {
-  emms <- emmeans(model, ~ modality_f | month, at = list(month = time_points))
-  df <- as.data.frame(emms)
-  df$outcome <- outcome_name
-  df
-}
-
-# Get predictions for each outcome
-pred_srcs17 <- get_preds(src_model_xcubic, "Total")
-pred_srce <- get_preds(srce_model_xcubic, "External")
-pred_srci <- get_preds(srci_model_xcubic, "Internal")
-pred_all <- bind_rows(pred_srcs17, pred_srce, pred_srci) # Combine
-pred_all$outcome <- factor(pred_all$outcome, levels = c("Total", "External", "Internal"))
-
-# Plot
-mlm_vis_full <- ggplot(pred_all, aes(x = month, y = emmean, color = modality_f, group = modality_f)) +
-  geom_line(size = 1) +
-  geom_ribbon(aes(ymin = lower.CL, ymax = upper.CL, fill = modality_f), alpha = 0.2, color = NA) +
-  facet_wrap(~outcome, scales = "free_y", nrow = 1) +
-  labs(x = "Month", y = "Estimated Score", color = "Modality", fill = "Modality") +
-  theme_minimal(base_size = 14, base_family = "serif") +
-  theme(
-    legend.position = "bottom",
-    strip.text = element_text(face = "bold", family = "serif")
-  )
-```
-
-```{r emm vis sensitivity}
-# Get predictions for each outcome
-xtx_pred_srcs17 <- get_preds(src_model_xcubicxtx, "Total")
-xtx_pred_srce <- get_preds(srce_model_xcubicxtx, "External")
-xtx_pred_srci <- get_preds(srci_model_xcubicxtx, "Internal")
-xtx_pred_all <- bind_rows(xtx_pred_srcs17, xtx_pred_srce, xtx_pred_srci) # Combine
-xtx_pred_all$outcome <- factor(xtx_pred_all$outcome, levels = c("Total", "External", "Internal"))
-
-# Plot
-mlm_vis_sens <- ggplot(xtx_pred_all, aes(x = month, y = emmean, color = modality_f, group = modality_f)) +
-  geom_line(size = 1) +
-  geom_ribbon(aes(ymin = lower.CL, ymax = upper.CL, fill = modality_f), alpha = 0.2, color = NA) +
-  facet_wrap(~outcome, scales = "free_y", nrow = 1) +
-  labs(x = "Month", y = "Estimated Score", color = "Modality", fill = "Modality") +
-  theme_minimal(base_size = 14, base_family = "serif") +
-  theme(
-    legend.position = "bottom",
-    strip.text = element_text(face = "bold", family = "serif")
-  )
-
-mlm_vis_full / mlm_vis_sens
-```
-
-# Raw data vis
-```{r visualize raw}
-# Reformat data
-sr_raw <- plf_data_treatment_sens %>%
-  dplyr::select(id, month, modality_f, srcs17, srcse, srcsi) %>%
-  pivot_longer(
-    cols = c(srcs17, srcse, srcsi),
-    names_to = "outcome",
-    values_to = "score"
-  ) %>%
-  mutate(
-    month = factor(month, levels = c(0, 3, 6, 12)),
-    outcome = factor(outcome,
-      levels = c("srcs17", "srcse", "srcsi"),
-      labels = c("Total", "External", "Internal")
-    )
-  )
-
-# Plot
-ggplot(sr_raw, aes(x = month, y = score, color = modality_f, group = modality_f)) +
-  stat_summary(fun = mean, geom = "line", size = 1) +
-  stat_summary(fun.data = mean_se, geom = "ribbon", alpha = 0.2, aes(fill = modality_f), color = NA) +
-  facet_wrap(~outcome, scales = "free_y", nrow = 1) +
-  labs(x = "Month", y = "Observed Score", color = "Modality", fill = "Modality") +
-  theme_minimal(base_size = 14, base_family = "serif") +
-  theme(
-    legend.position = "bottom",
-    strip.text = element_text(face = "bold", family = "serif")
-  )
-```
-
-# Treatment engagement and completion  
-- In the full intent-to-treat sample so to not condition on treatment initiation 
-- Based on randomization assignment to in-person versus telehealth delivery; 
-  participants who transitioned modalities due to COVID-19 were classified according to their original assignment for ITT purposes
-```{r tx engage}
-# Model treatment engagement and completion as ITT outcomes,
-# not a group descriptor
-
-# Initiation model (>0 sessions)
-initiation_model <- glm(
-  initiated ~ as.factor(modality_assign) + as.factor(site_new) + ssi,
-  data = plf_data_itt,
-  family = binomial
+# Save analysis data
+```{r save data}
+# Save CSV
+write.csv(plf_data_treatment_sens,
+  file = paste0("03_Output/analysis_data_sg_", format(Sys.Date(), "%Y-%m-%d"), ".csv"),
+  row.names = FALSE
 )
-
-summary(initiation_model)
-exp(cbind(
-  OR = coef(initiation_model),
-  confint(initiation_model)
-))
-
-# Engagement model (> 5 sessions)
-engagement_model <- glm(
-  six_sess ~ as.factor(modality_assign) + as.factor(site_new) + ssi,
-  data = plf_data_itt,
-  family = binomial
-)
-
-summary(engagement_model)
-exp(cbind(
-  OR = coef(engagement_model),
-  confint(engagement_model)
-))
-
-# Completion model (10+ sessions)
-completion_model <- glm(
-  completer ~ as.factor(modality_assign) + as.factor(site_new) + ssi,
-  data = plf_data_itt,
-  family = binomial
-)
-
-summary(completion_model)
-exp(cbind(
-  OR = coef(completion_model),
-  confint(completion_model)
-))
-
-# Session count model
-# Check for overdisperson
-mean(plf_data_itt$n_sessions_attended, na.rm = TRUE)
-var(plf_data_itt$n_sessions_attended, na.rm = TRUE)
-# Variance is > mean, so use a negative binomial model
-attendance_model <- glmmTMB(
-  n_sessions_attended ~ as.factor(modality_assign) + ssi + as.factor(site_new),
-  data = plf_data_itt,
-  family = nbinom2
-)
-
-summary(attendance_model)
 ```
+

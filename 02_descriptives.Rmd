@@ -26,6 +26,10 @@ if (!require("janitor")) {
   install.packages("janitor")
   require("janitor")
 }
+if (!require("forcats")) {
+  install.packages("forcats")
+  require("forcats")
+}
 ```
 
 ```{r folder to save output}
@@ -38,7 +42,7 @@ if (!dir.exists("02_Output")) {
 Created in 01_data.Rmd
 ```{r data}
 # Stratified sample
-plf_data_filtered <- read.csv("01_Output/treatment_data_sg_2025-10-21.csv")
+plf_data_filtered <- read.csv("01_Output/treatment_data_sg_2026-01-12.csv")
 
 # Filter to pre and post treatment
 plf_data_treatment <- plf_data_filtered %>%
@@ -56,8 +60,11 @@ plf_data_baseline <- plf_data_filtered %>%
 plf_data_baseline_sens <- plf_data_baseline %>%
   filter(modality_type != 3)
 
+# Check how many are missing baseline SI (covariate)
+sum(is.na(plf_data_baseline_sens$ssi))
+
 # ITT baseline sample
-plf_data_itt <- read.csv("01_Output/initiation_data_sg_2026-01-02.csv")
+plf_data_itt <- read.csv("01_Output/initiation_data_sg_2026-01-12.csv")
 ```
 
 # Sample N descriptives
@@ -65,6 +72,7 @@ plf_data_itt <- read.csv("01_Output/initiation_data_sg_2026-01-02.csv")
 # Modality
 table(plf_data_baseline$modality_type)
 table(plf_data_baseline_sens$modality_type)
+table(plf_data_baseline_sens$Attendance)
 
 # VA Site
 table(plf_data_baseline$site)
@@ -192,7 +200,7 @@ Descriptives and t-tests
 covariates_mlm <- plf_data_baseline_sens %>%
   dplyr::select(
     modality_type_new,
-    bdi, bhs, ssi, inq_pb, inq_tb, srcs17,
+    bhs, atspph, bdi, ssi, inq_pb, inq_tb, srcs17,
     Number_MH_encounters,
     age_demo
   )
@@ -200,7 +208,7 @@ covariates_mlm <- plf_data_baseline_sens %>%
 covariates_itt <- plf_data_itt %>%
   dplyr::select(
     modality_assign,
-    bdi, bhs, ssi, inq_pb, inq_tb, srcs17,
+    bhs, atspph, bdi, ssi, inq_pb, inq_tb, srcs17,
     Number_MH_encounters,
     age_demo
   )
@@ -223,55 +231,484 @@ in_person_table_itt
 telehealth_table_itt
 
 # t-tests for main mlm sample
-t_test_covariates_mlm <- plf_data_baseline_sens %>%
-  rempsyc::nice_t_test(
-    response = c("ssi", "bdi", "bhs", "inq_tb", "inq_pb", "srcs17", "bpaqpa", "bpaqva", "Number_MH_encounters", "age_demo"),
-    group = "modality_type_new"
-  )
+t_test_covariates_mlm <- jmv::ttestIS(
+  formula = srcs17 + ssi + bhs + atspph + bdi +
+    inq_tb + inq_pb + bpaqpa + bpaqva +
+    Number_MH_encounters + age_demo ~ modality_type_new,
+  data = plf_data_baseline_sens %>%
+    dplyr::filter(!is.na(ssi)),
+  vars = vars(
+    srcs17, ssi, bhs, atspph, bdi,
+    inq_tb, inq_pb, bpaqpa, bpaqva,
+    Number_MH_encounters, age_demo
+  ),
+  welchs = TRUE,
+  mann = TRUE,
+  effectSize = TRUE,
+  desc = TRUE,
+  norm = TRUE
+)
 
 t_test_covariates_mlm
 
+
 # t-tests for itt sample
-t_test_covariates_itt <- plf_data_itt %>%
-  rempsyc::nice_t_test(
-    response = c("ssi", "bdi", "bhs", "inq_tb", "inq_pb", "srcs17", "bpaqpa", "bpaqva", "Number_MH_encounters", "age_demo"),
-    group = "modality_assign"
-  )
+t_test_covariates_itt <- jmv::ttestIS(
+  formula = srcs17 + ssi + bhs + atspph + bdi +
+    inq_tb + inq_pb + bpaqpa + bpaqva +
+    Number_MH_encounters + age_demo ~ modality_assign,
+  data = plf_data_itt %>%
+    dplyr::filter(!is.na(ssi)),
+  vars = vars(
+    srcs17, ssi, bhs, atspph, bdi,
+    inq_tb, inq_pb, bpaqpa, bpaqva,
+    Number_MH_encounters, age_demo
+  ),
+  welchs = TRUE,
+  mann = TRUE,
+  effectSize = TRUE,
+  desc = TRUE,
+  norm = TRUE
+)
 
 t_test_covariates_itt
-
 
 # Check baseline correlations between suicide-related coping & suicidal ideation
 cor.test(plf_data_baseline_sens$ssi, plf_data_baseline_sens$srcs17)
 cor.test(plf_data_baseline_sens$ssi, plf_data_baseline_sens$srcse)
 cor.test(plf_data_baseline_sens$ssi, plf_data_baseline_sens$srcsi)
+
+# Telehealth
+table(plf_data_baseline_sens[plf_data_baseline_sens$modality_type_new == 1, ]$ssi)
+summary(plf_data_baseline_sens[plf_data_baseline_sens$modality_type_new == 1, ]$ssi)
+
+# In-person
+table(plf_data_baseline_sens[plf_data_baseline_sens$modality_type_new == 0, ]$ssi)
+summary(plf_data_baseline_sens[plf_data_baseline_sens$modality_type_new == 0, ]$ssi)
 ```
 
-# Data for people with mixed modality
-```{r mixed modality ids}
-plf_data_baseline_mixed <- plf_data_baseline %>%
-  filter(modality_type == 3)
-
-# Number of sessions
-table(
-  plf_data_baseline_mixed$id,
-  plf_data_baseline_mixed$n_sessions_attended
+# Scale reliability
+```{r reliable}
+# SRCS-17 (all timepoints)
+ltm::cronbach.alpha(
+  plf_data_treatment_sens[plf_data_treatment_sens$month == 0, ] %>%
+    select(matches("^q\\d{2}_srcs$")) %>%
+    select(-matches("^q(02|07|15|21)_srcs$")) %>% # remove items 2, 7, 15, 21
+    filter(rowSums(is.na(.)) == 0),
+  CI = TRUE
 )
 
-# Look at original sessions data for these folks
-path <- "~/Labs/Github/project-life-force/project-life-force/Raw_datasets/database_12-29-2024.xlsx"
-excel_sheets(path)
+ltm::cronbach.alpha(
+  plf_data_treatment_sens[plf_data_treatment_sens$month == 3, ] %>%
+    select(matches("^q\\d{2}_srcs$")) %>%
+    select(-matches("^q(02|07|15|21)_srcs$")) %>%
+    filter(rowSums(is.na(.)) == 0),
+  CI = TRUE
+)
 
-sessions <- read_excel(path, sheet = "sessions")
-colnames(sessions) <- gsub("\\s+", "_", colnames(sessions))
+ltm::cronbach.alpha(
+  plf_data_treatment_sens[plf_data_treatment_sens$month == 6, ] %>%
+    select(matches("^q\\d{2}_srcs$")) %>%
+    select(-matches("^q(02|07|15|21)_srcs$")) %>%
+    filter(rowSums(is.na(.)) == 0),
+  CI = TRUE
+)
 
-# Make the 'total number of sessions attended' variable.
-sessions <- sessions %>%
-  group_by(id) %>%
-  mutate(n_attended = if_else(arm == 1, sum(!is.na(date)), NA))
+ltm::cronbach.alpha(
+  plf_data_treatment_sens[plf_data_treatment_sens$month == 12, ] %>%
+    select(matches("^q\\d{2}_srcs$")) %>%
+    select(-matches("^q(02|07|15|21)_srcs$")) %>%
+    filter(rowSums(is.na(.)) == 0),
+  CI = TRUE
+)
+# SRCS-17 (just baseline) - ITT
+ltm::cronbach.alpha(
+  plf_data_itt[plf_data_itt$month == 0, ] %>%
+    select(matches("^q\\d{2}_srcs$")) %>%
+    select(-matches("^q(02|07|15|21)_srcs$")) %>% # remove items 2, 7, 15, 21
+    filter(rowSums(is.na(.)) == 0),
+  CI = TRUE
+)
 
-# Filter to mixed-modal
-sessions_mixed <- sessions %>%
-  filter(id %in% c("BX-074", "BX-084", "BX-087", "BX-089"))
-sessions_mixed
+# ATSPPH (just baseline) - treatment engaged
+ltm::cronbach.alpha(
+  plf_data_baseline_sens %>%
+    select(matches("^q\\d{2}_atspph$")) %>%
+    filter(rowSums(is.na(.)) == 0),
+  CI = TRUE
+)
+
+# ATSPPH (just baseline) - ITT
+ltm::cronbach.alpha(
+  plf_data_itt %>%
+    select(matches("^q\\d{2}_atspph$")) %>%
+    filter(rowSums(is.na(.)) == 0),
+  CI = TRUE
+)
+
+# BHS (just baseline) - treatment engaged
+ltm::cronbach.alpha(
+  plf_data_baseline_sens %>%
+    select(matches("^q\\d{2}_bhs$")) %>%
+    filter(rowSums(is.na(.)) == 0), 
+  CI = TRUE
+)
+
+# BHS (just baseline) - ITT
+ltm::cronbach.alpha(
+  plf_data_itt %>%
+    select(matches("^q\\d{2}_bhs$")) %>%
+    filter(rowSums(is.na(.)) == 0), 
+  CI = TRUE
+)
+
+# BDI-II (just baseline) - treatment engaged
+ltm::cronbach.alpha(
+  plf_data_baseline_sens %>%
+    select(matches("^q\\d{2}_bdi$")) %>%
+    filter(rowSums(is.na(.)) == 0), 
+  CI = TRUE
+)
+
+# BDI-II (just baseline) - ITT
+ltm::cronbach.alpha(
+  plf_data_itt %>%
+    select(matches("^q\\d{2}_bdi$")) %>%
+    filter(rowSums(is.na(.)) == 0), 
+  CI = TRUE
+)
+
+# SSI (just baseline) - treatment engaged
+ltm::cronbach.alpha(
+  plf_data_baseline_sens %>%
+    select(matches("^q\\d{2}_ssi$")) %>%
+    select(-matches("^q(20|21)_ssi$")) %>% # remove items 20 & 21 (not part of total score)
+    filter(rowSums(is.na(.)) == 0), # this will remove a fair amount of people since items 1-5 are used as a screener
+  CI = TRUE
+)
+
+# SSI (just baseline) - ITT
+ltm::cronbach.alpha(
+  plf_data_itt %>%
+    select(matches("^q\\d{2}_ssi$")) %>%
+    select(-matches("^q(20|21)_ssi$")) %>% # remove items 20 & 21 (not part of total score)
+    filter(rowSums(is.na(.)) == 0), # this will remove a fair amount of people since items 1-5 are used as a screener
+  CI = TRUE
+)
+```
+
+# Demographics
+- Full sample assigned to treatment (96)
+  Telehealth (51)
+  In-person (45)
+- Full sample that received treatment (64)
+  Telehealth (43)
+  In-person (21)
+[all who aren't missing baseline suicidal ideation]
+```{r demo function}
+demo_vars <- list(
+  Sex = list(
+    var = "sex_demo",
+    levels = c(1, 2),
+    labels = c("Female", "Male")
+  ),
+  # 1 = female
+  # 2 = male
+
+  Ethnicity = list(
+    var = "latino_demo",
+    levels = c(1, 2),
+    labels = c("Hispanic/Latinx", "Non-Hispanic/Latinx")
+  ),
+  # 1 = hispanic/latinx
+  # 2 = non-hispanic, non-latinx
+  Race = list(
+    var = "race_demo",
+    levels = 1:7,
+    labels = c(
+      "Asian",
+      "Black/African American",
+      "Multiracial",
+      "Native American/Alaska Native",
+      "Native Hawaiian/Pacific Islander",
+      "White",
+      "Other"
+    )
+  ),
+  # 1 = Asian
+  # 2 = Black/African American
+  # 3 = Multiracial
+  # 4 = Native American/Alaska Native
+  # 5 = Native Hawaiian/Pacific Islander
+  # 6 = White / Cuacasian
+  # 7 = Other
+
+  Education = list(
+    var = "degree_demo",
+    levels = 1:6,
+    labels = c(
+      "Some high school",
+      "High school diploma/GED",
+      "Some college / 2-year degree",
+      "Bachelor’s degree",
+      "Master’s degree",
+      "Doctoral degree"
+    )
+  ),
+  # 1 = some high school
+  # 2 = high school diploma/GED
+  # 3 = some college or 2-year degree
+  # 4 = Bachelors degree
+  # 5 = Masters degree
+  # 6 = doctoral degree
+
+  Employment = list(
+    var = "employ_demo",
+    levels = 1:6,
+    labels = c(
+      "Full-time",
+      "Part-time",
+      "Unemployed",
+      "Student",
+      "Retired",
+      "Self-employed"
+    )
+  ),
+
+  # 1 = full time
+  # 2 = part time
+  # 3 = unemployed
+  # 4 = student
+  # 5 = retired
+  # 6 = self-employed
+
+  Marital_Status = list(
+    var = "marry_demo",
+    levels = 1:5,
+    labels = c(
+      "Married / Cohabiting",
+      "Widowed",
+      "Divorced / Annulled",
+      "Separated",
+      "Never married"
+    )
+  ),
+  # 1 = married or living with someone as if so
+  # 2 = widowed
+  # 3 = divorced or anulled
+  # 4 = separated
+  # 5 = never married
+
+  Current_Treatment = list(
+    var = "treat_demo",
+    levels = 1:4,
+    labels = c(
+      "No current psychiatric treatment",
+      "Outpatient mental health care",
+      "Psychiatric hospitalization",
+      "Partial hospitalization / institutional living"
+    )
+  ),
+
+  # 1 = not curretly receiving inpaitent or outpatient psychiatric treatment
+  # 2 = currently receiving outpatinent mental health care or follow-up
+  # 3 = hospitalization as a psychiatric patient at the time of interview
+  # 4 = in a partial hospitalization program or other istitutional living situation
+
+  Prior_SI_or_Attempt = list(
+    var = "prior_demo",
+    levels = c(1, 2),
+    labels = c("Yes", "No")
+  ),
+
+  # Suicidal ideation/attempt prior to military
+  # 1 = yes
+  # 2 = no
+
+  Prison_History = list(
+    var = "prison_demo",
+    levels = c(1, 2),
+    labels = c("Yes", "No")
+  ),
+
+  # Ever serve time in prison
+  # 1 = yes
+  # 2 = no
+
+  Attendance = list(
+    var = "Attendance",
+    levels = c("Did not initiate", "Initiated", "Six Sessions", "Completer"),
+    labels = c("Did not initiate", "Initiated", "Six Sessions", "Completer")
+    # "initiated" = 0 (no), 1 (yes)
+    # "six_sess" = 0 (no), 1 (yes)
+    # "completer" = 0 (no), 1 (yes)
+  )
+)
+
+# Function for demo table
+make_demographic_table <- function(data, N, demo_vars) {
+  library(dplyr)
+  library(tidyr)
+  library(purrr)
+
+  # Recode variables
+  recoded_data <- map_dfc(demo_vars, function(x) {
+    factor(
+      data[[x$var]],
+      levels = x$levels,
+      labels = x$labels
+    )
+  }) %>%
+    setNames(names(demo_vars))
+
+  recoded_data %>%
+    pivot_longer(
+      everything(),
+      names_to = "Characteristic",
+      values_to = "Category"
+    ) %>%
+    filter(!is.na(Category)) %>%
+    count(Characteristic, Category, name = "n") %>%
+    mutate(
+      Percent = round((n / N) * 100, 1),
+      `n (%)` = paste0(n, " (", Percent, "%)")
+    ) %>%
+    select(Characteristic, Category, `n (%)`) %>%
+    arrange(Characteristic)
+}
+```
+
+## Demographic tables (both samples + divided)
+```{r demo table}
+# Remove people missing baseline suicidal ideation from N = 70 who received PLF
+plf_data_baseline_sens_64 <- plf_data_baseline_sens %>%
+  dplyr::filter(!is.na(ssi))
+
+# Demographic table for N = 64
+demographic_table_64 <- make_demographic_table(
+  data = plf_data_baseline_sens_64,
+  N = 64,
+  demo_vars = demo_vars
+)
+
+# Demographic table for those who received in-person
+plf_data_baseline_ip <- plf_data_baseline_sens_64 %>%
+  dplyr::filter(modality_type_new == 0)
+
+demographic_table_ip <- make_demographic_table(
+  data = plf_data_baseline_ip,
+  N = 21,
+  demo_vars = demo_vars
+)
+
+# Demographic table for those who received telehealth
+plf_data_baseline_th <- plf_data_baseline_sens_64 %>%
+  dplyr::filter(modality_type_new == 1)
+
+demographic_table_th <- make_demographic_table(
+  data = plf_data_baseline_th,
+  N = 43,
+  demo_vars = demo_vars
+)
+
+# Remove people missing baseline suicidal ideation from N = 101
+plf_data_itt_baseline <- plf_data_itt %>%
+  dplyr::filter(!is.na(ssi) & month == 0)
+
+demographic_table_96 <- make_demographic_table(
+  data = plf_data_itt_baseline,
+  N = 96,
+  demo_vars = demo_vars
+)
+
+# Demographic table for those assigned to in-person
+plf_data_itt_baseline_ip <- plf_data_itt_baseline %>%
+  dplyr::filter(modality_assign == 0)
+
+demographic_table_45 <- make_demographic_table(
+  data = plf_data_itt_baseline_ip,
+  N = 45,
+  demo_vars = demo_vars
+)
+
+# Demograhic table for those assigned to telehealth
+plf_data_itt_baseline_th <- plf_data_itt_baseline %>%
+  dplyr::filter(modality_assign == 1)
+
+demographic_table_51 <- make_demographic_table(
+  data = plf_data_itt_baseline_th,
+  N = 51,
+  demo_vars = demo_vars
+)
+
+# Merge tables
+demo_64 <- demographic_table_64 %>%
+  rename(`Total received (N = 64)` = `n (%)`)
+
+demo_th <- demographic_table_th %>%
+  rename(`Received telehealth (N = 43)` = `n (%)`)
+
+demo_ip <- demographic_table_ip %>%
+  rename(`Received in-person (N = 21)` = `n (%)`)
+
+demo_96 <- demographic_table_96 %>%
+  rename(`Total assigned (N = 96)` = `n (%)`)
+
+demo_45 <- demographic_table_45 %>%
+  rename(`Assigned in-person (N = 45)` = `n (%)`)
+
+demo_51 <- demographic_table_51 %>%
+  rename(`Assigned telehealth (N = 51)` = `n (%)`)
+
+demographic_table <- demo_64 %>%
+  full_join(demo_th,
+    by = c("Characteristic", "Category")
+  ) %>%
+  full_join(demo_ip,
+    by = c("Characteristic", "Category")
+  ) %>%
+  full_join(demo_96,
+    by = c("Characteristic", "Category")
+  ) %>%
+  full_join(demo_45,
+    by = c("Characteristic", "Category")
+  ) %>%
+  full_join(demo_51,
+    by = c("Characteristic", "Category")
+  ) %>%
+  arrange(Characteristic)
+
+
+demographic_table
+
+# Save combined demo table(s)
+write.csv(
+  demographic_table,
+  paste0("02_Output/demo_tables_sg_", Sys.Date(), ".csv")
+)
+
+# Age 
+# Total received treatment (N = 64)
+summary(plf_data_baseline_sens_64$age_demo) 
+sd(plf_data_baseline_sens_64$age_demo, na.rm = TRUE) 
+
+# Telehealth (N = 43)
+summary(plf_data_baseline_th$age_demo) 
+sd(plf_data_baseline_th$age_demo, na.rm = TRUE) 
+
+# In-person (N = 21)
+summary(data_baseline_ip $age_demo) 
+sd(plf_data_baseline_ip $age_demo, na.rm = TRUE) 
+
+# Total assigned to treatment (N = 96)
+summary(plf_data_itt_baseline$age_demo) 
+sd(plf_data_itt_baseline$age_demo, na.rm = TRUE) 
+
+# Telehealth assigned (N = 51)
+summary(plf_data_itt_baseline_th$age_demo) 
+sd(plf_data_itt_baseline_th$age_demo, na.rm = TRUE) 
+
+# In-person assigned (N = 45)
+summary(plf_data_itt_baseline_ip$age_demo)
+sd(plf_data_itt_baseline_ip$age_demo, na.rm = TRUE) 
 ```

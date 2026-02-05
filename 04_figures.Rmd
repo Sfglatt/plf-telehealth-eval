@@ -1,0 +1,205 @@
+---
+title: "04_figures"
+author: "Sglatt"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+```{r packages}
+if (!require("emmeans")) {
+  install.packages("emmeans")
+  require("emmeans")
+}
+if (!require("ggplot2")) {
+  install.packages("ggplot2")
+  require("ggplot2")
+}
+if (!require("patchwork")) {
+  install.packages("patchwork")
+  require("patchwork")
+}
+if (!require("tidyverse")) {
+  install.packages("tidyverse")
+  require("tidyverse")
+}
+if (!require("showtext")) {
+  install.packages("showtext")
+  require("showtext")
+}
+# showtext_auto()
+```
+
+```{r folder to save output}
+if (!dir.exists("04_Output")) {
+  dir.create("04_Output")
+}
+```
+
+# Import models
+From 03_analysis.Rmd
+```{r models}
+# Full sample
+src_model_xcubic <- readRDS("03_Output/src_model_xcubic.rds")
+srce_model_xcubic <- readRDS("03_Output/srce_model_xcubic.rds")
+srci_model_xcubic <- readRDS("03_Output/srci_model_xcubic.rds")
+
+# Excluding one site
+src_model_xcubicxtx <- readRDS("03_Output/src_model_xcubicxtx.rds")
+srce_model_xcubicxtx <- readRDS("03_Output/srce_model_xcubicxtx.rds")
+srci_model_xcubicxtx <- readRDS("03_Output/srci_model_xcubicxtx.rds")
+```
+
+# Import data
+From 03_analysis.Rmd
+```{r data}
+plf_data_treatment_sens <- read.csv("03_output/analysis_data_sg_2026-01-07.csv")
+
+# Make sure the right variables are factors
+plf_data_treatment_sens$modality_f <- factor(plf_data_treatment_sens$modality_f)
+plf_data_treatment_sens$site_new_f <- factor(plf_data_treatment_sens$site_new_f)
+
+# Excluding the CTVCS site
+plf_data_treatment_sens_xtx <- plf_data_treatment_sens %>%
+  filter(site_new != 4)
+```
+
+# Model visualizations
+Estimated marginal means
+
+# Plot prep
+```{r prep vis}
+time_points <- c(0, 3, 6, 12)
+
+# quick function
+get_preds <- function(model, outcome_name, data) {
+  emms <- emmeans(model, ~ modality_f | month, at = list(month = time_points), data = data)
+  df <- as.data.frame(emms)
+  df$outcome <- outcome_name
+  df
+}
+```
+
+# Main models
+With the full sample that attended >0 sessions (initiated)
+```{r full}
+pred_srcs17 <- get_preds(src_model_xcubic, "SRCS", data = plf_data_treatment_sens)
+pred_srce <- get_preds(srce_model_xcubic, "SRCS-E", data = plf_data_treatment_sens)
+pred_srci <- get_preds(srci_model_xcubic, "SRCS-I", data = plf_data_treatment_sens)
+pred_all <- bind_rows(pred_srcs17, pred_srce, pred_srci)
+pred_all$outcome <- factor(pred_all$outcome, levels = c("SRCS", "SRCS-E", "SRCS-I"))
+
+pred_all$month_factor <- factor(pred_all$month, levels = c(0, 3, 6, 12))
+
+mlm_vis_full <- ggplot(
+  pred_all,
+  aes(x = month_factor, y = emmean, color = modality_f, group = modality_f)
+) +
+  geom_line(size = 1.2) +
+  geom_ribbon(
+    aes(ymin = lower.CL, ymax = upper.CL, fill = modality_f),
+    alpha = 0.25,
+    color = NA
+  ) +
+  facet_wrap(~ outcome, scales = "free_y", nrow = 1) +
+  labs(
+    x = "Month",
+    y = "Estimated Score",
+    color = "Modality",
+    fill = "Modality"
+  ) +
+  theme_minimal(base_size = 12, base_family = "serif") +
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(face = "bold", size = 12),
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 12),
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 12)
+  )
+
+mlm_vis_full
+
+
+# Save
+ggsave(
+  filename = "04_Output/mlm_vis_full_130.png",
+  plot = mlm_vis_full,
+  width = 7,
+  height = 4,
+  dpi = 300
+)
+```
+
+Excluding the CTVCS site
+```{r emm vis sensitivity}
+xtx_pred_srcs17 <- get_preds(src_model_xcubicxtx, "SRCS", data = plf_data_treatment_sens_xtx)
+xtx_pred_srce <- get_preds(srce_model_xcubicxtx, "SRCS-E", data = plf_data_treatment_sens_xtx)
+xtx_pred_srci <- get_preds(srci_model_xcubicxtx, "SRCS-I", data = plf_data_treatment_sens_xtx)
+xtx_pred_all <- bind_rows(xtx_pred_srcs17, xtx_pred_srce, xtx_pred_srci)
+xtx_pred_all$outcome <- factor(xtx_pred_all$outcome, levels = c("SRCS", "SRCS-E", "SRCS-I"))
+
+xtx_pred_all$month_factor <- factor(pred_all$month, levels = c(0, 3, 6, 12))
+
+mlm_vis_sens <- ggplot(xtx_pred_all, aes(x = month_factor, y = emmean, color = modality_f, group = modality_f)) +
+  geom_line(size = 1.2) +
+  geom_ribbon(aes(ymin = lower.CL, ymax = upper.CL, fill = modality_f), alpha = 0.2, color = NA) +
+  facet_wrap(~outcome, scales = "free_y", nrow = 1) +
+  labs(x = "Month", y = "Estimated Score", color = "Modality", fill = "Modality") +
+  theme_minimal(base_size = 18, base_family = "serif") +
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(face = "bold", size = 22),
+    axis.text = element_text(size = 22),
+    axis.title = element_text(size = 22),
+    legend.text = element_text(size = 22),
+    legend.title = element_text(size = 22)
+  )
+
+mlm_vis_full / mlm_vis_sens
+
+# Save
+ggsave(
+  filename = "04_Output/mlm_vis_xtx.png",
+  plot = mlm_vis_full,
+  width = 7,
+  height = 4,
+  dpi = 300
+)
+```
+
+# Raw visualizations
+```{r visualize raw}
+# Reformat data
+sr_raw <- plf_data_treatment_sens %>%
+  dplyr::select(id, month, modality_f, srcs17, srcse, srcsi) %>%
+  pivot_longer(
+    cols = c(srcs17, srcse, srcsi),
+    names_to = "outcome",
+    values_to = "score"
+  ) %>%
+  mutate(
+    month = factor(month, levels = c(0, 3, 6, 12)),
+    outcome = factor(outcome,
+      levels = c("srcs17", "srcse", "srcsi"),
+      labels = c("Total", "External", "Internal")
+    )
+  )
+
+# Plot
+ggplot(sr_raw, aes(x = month, y = score, color = modality_f, group = modality_f)) +
+  stat_summary(fun = mean, geom = "line", size = 1) +
+  stat_summary(fun.data = mean_se, geom = "ribbon", alpha = 0.2, aes(fill = modality_f), color = NA) +
+  facet_wrap(~outcome, scales = "free_y", nrow = 1) +
+  labs(x = "Month", y = "Observed Score", color = "Modality", fill = "Modality") +
+  theme_minimal(base_size = 14, base_family = "serif") +
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(face = "bold", family = "serif")
+  )
+```
+

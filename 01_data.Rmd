@@ -81,6 +81,17 @@ sessions$initiated <- ifelse(sessions$n_attended > 0, 1, 0)
 sessions$six_sess <- ifelse(sessions$n_attended > 5, 1, 0)
 sessions$completer <- ifelse(sessions$n_attended >= 10, 1, 0)
 
+# Make a single variable for all 
+sessions <- sessions %>%
+  mutate(
+    Attendance = case_when(
+      completer == 1 ~ "Completer",
+      six_sess == 1 ~ "Six Sessions",
+      initiated == 1 ~ "Initiated",
+      TRUE ~ "Did not initiate"
+    )
+  )
+
 # Look at modality
 table(unique(sessions[c("id", "type")])$type)
 
@@ -141,6 +152,8 @@ plf_data$modality_type_new <- sessions$type_new[match(plf_data$id, sessions$id)]
 plf_data$completer <- sessions$completer[match(plf_data$id, sessions$id)]
 plf_data$six_sess <- sessions$six_sess[match(plf_data$id, sessions$id)]
 plf_data$initiated <- sessions$initiated[match(plf_data$id, sessions$id)]
+plf_data$Attendance <- sessions$Attendance[match(plf_data$id, sessions$id)]
+
 
 # Add the lifetime C-SSRS
 plf_data$q11_CSSRS_lifetime <- csrss$q11_CSSRS_lifetime[match(plf_data$id, csrss$id)]
@@ -155,7 +168,7 @@ plf_data_filtered <- plf_data %>%
 ```
 
 # How many total were randomzed to telehealth/in-person/both
-```{r numbers}
+```{r plf numbers}
 # How many don't have a modality logged
 unique(sessions$id[is.na(sessions$type) | sessions$type == ""]) # 31
 
@@ -170,13 +183,14 @@ dates <- read_excel(path, sheet = "status")
 missing_modality_ids <- unique(sessions$id[is.na(sessions$type) | sessions$type == ""])
 dates[dates$id %in% missing_modality_ids, ]
 
-# The breakdown in the sessions data
+# The breakdown in the sessions data for PLF
 table(plf_data[plf_data$arm_rec == 1 & plf_data$month == 0, ]$modality_type)
 
-# The breakdown in the dates data
+# The breakdown in the dates data for PLF
 table(dates[dates$arm == 1, ]$tele)
+# 40 in-person, 55 telehealth, 6 mixed
 
-# From this dates data, include people who initiated treatment
+# From this dates data, include people who initiated treatment in PLF
 dates_initiated <- dates %>%
   filter(id %in% sessions$id[sessions$initiated == 1])
 view(dates_initiated)
@@ -222,18 +236,40 @@ dates$tele[dates$id == "BX-085"] <- "1"
 dates$tele[dates$id == "BX-083"] <- "1"
 ```
 
+# Look at TAU data
+```{r tau numbers}
+# The breakdown in the dates data for TAU
+table(dates[dates$arm == 2, ]$tele) 
+# 47 in-person, 50 telehealth, 9 mixed
+
+# Filter the dataset to TAU 
+tau_data_filtered <- plf_data %>%
+  filter(
+    arm_label == "TAU",
+    month != -9
+  )
+
+# Add in tele, dtcon, and dtm00 from "dates"
+tau_data_filtered <- tau_data_filtered %>%
+  left_join(
+    dates %>% select(id, tele, dtcon, dtm00),  
+    by = "id"                                    
+  )
+```
+
 # Save data for MLMs
-```{r save mlm data, eval=FALSE}
+```{r save mlm data, eval=TRUE}
 write.csv(
   plf_data_filtered,
   paste0("01_Output/treatment_data_sg_", Sys.Date(), ".csv")
 )
 # 2025-10-21: First filtered multi-wave data
 # 2025-12-15: Add C-SSRS
+# 2026-01-12: Make/add new attendance variable
 ```
 
 # Save data for ITT engagement/initiation
-```{r save itt data, eval=FALSE}
+```{r save itt data, eval=TRUE}
 # From the dates sheet, make a modality assignment variable
 dates <- dates %>%
   mutate(
@@ -257,7 +293,6 @@ plf_data <- plf_data %>%
 plf_data_m0_plf <- plf_data %>%
   dplyr::filter(month == 0, arm_rec == 1)
 
-# Look/confirm N's
 table(plf_data_m0_plf$modality_assign, useNA = "ifany") # 0 = telehealth, 46; 1 = in-person, 55
 
 # Save data
@@ -266,5 +301,14 @@ write.csv(
   paste0("01_Output/initiation_data_sg_", Sys.Date(), ".csv")
 )
 # 2026-01-02: First filtered ITT data for initation/engagement
+# 2026-01-12: Make/add new attendance variable
+```
+
+```{r save tau data, eval=FALSE}
+write.csv(
+  tau_data_filtered,
+  paste0("01_Output/tau_data_sg_", Sys.Date(), ".csv")
+)
+# 2026-01-05: First filtered data
 ```
 
