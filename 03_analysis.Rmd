@@ -19,10 +19,6 @@ if (!require("lmerTest")) {
   install.packages("lmerTest")
   require("lmerTest")
 }
-if (!require("glmmTMB")) {
-  install.packages("glmmTMB")
-  require("glmmTMB")
-}
 if (!require("sjPlot")) {
   install.packages("sjPlot")
   require("sjPlot")
@@ -77,7 +73,7 @@ if (!dir.exists("03_Output")) {
 Data for modality x time models; created in 01_data.Rmd
 ```{r mlm data}
 # Continuous outcomes data
-plf_data_filtered <- read.csv("01_Output/treatment_data_sg_2025-12-15.csv")
+plf_data_filtered <- read.csv("01_Output/treatment_data_sg_2026-05-12.csv")
 
 # Filter outcomes data to pre and post treatment (remove -9)
 plf_data_treatment <- plf_data_filtered %>%
@@ -103,7 +99,7 @@ table(plf_data_baseline$modality_type_new)
 
 Data for initiation/engagement; created in 01_data.Rmd
 ```{r itt data}
-plf_data_itt <- read.csv("01_Output/initiation_data_sg_2026-01-02.csv")
+plf_data_itt <- read.csv("01_Output/initiation_data_sg_2026-05-12.csv")
 ```
 
 # Make MLM vars
@@ -126,312 +122,52 @@ plf_data_treatment_sens <- plf_data_treatment_sens %>%
   left_join(ssi_bl, by = "id", suffix = c("", "_bl"))
 ```
 
-# Did treatment engagement differ by modality?
-## Raw comparisons
+# Treatment initiation
+```{r initiate raw}
+# Rates of initiation among those assigned
+table(plf_data_itt$modality_assign)
+table(plf_data_itt$Attendance_clean)
+21 + 31 + 24 + 25 # 101
+
+table(plf_data_itt$modality_assign, plf_data_itt$Attendance_clean)
+6 + 20 + 10 + 10 # 46
+15 + 11 + 14 + 15 # 55
+```
+
+# Treatment engagement and completion
 ```{r engage raw}
 # in-person session attendance
-summary(plf_data_baseline_sens[plf_data_baseline_sens$modality_type_new == 0, ]$n_sessions_attended)
-sd(plf_data_baseline_sens[plf_data_baseline_sens$modality_type_new == 0, ]$n_sessions_attended)
+summary(plf_data_baseline_sens[plf_data_baseline_sens$modality_type_new == 0, ]$n_sessions_attended_clean)
+sd(plf_data_baseline_sens[plf_data_baseline_sens$modality_type_new == 0, ]$n_sessions_attended_clean)
 
 # telehealth session attendance
-summary(plf_data_baseline_sens[plf_data_baseline_sens$modality_type_new == 1, ]$n_sessions_attended)
+summary(plf_data_baseline_sens[plf_data_baseline_sens$modality_type_new == 1, ]$n_sessions_attended_clean)
 sd(plf_data_baseline_sens[plf_data_baseline_sens$modality_type_new == 1, ]$n_sessions_attended)
 
 # Comparison
-wilcox.test(n_sessions_attended ~ modality_type_new, data = plf_data_baseline_sens)
+wilcox.test(n_sessions_attended_clean ~ modality_type_new, data = plf_data_baseline_sens)
 
-# R&R, add range and IQR
+# Range and IQR
 plf_data_baseline_sens %>%
   group_by(modality_type_new) %>%
   summarise(
     n = n(),
-    median_sessions = median(n_sessions_attended, na.rm = TRUE),
-    IQR_sessions = IQR(n_sessions_attended, na.rm = TRUE)
-  )
-```
-
-## Adjusted for ideation and site; modeled as predictors
-- In the full intent-to-treat sample so to not condition on treatment initiation 
-  [but we need to condition on initiation for engagement/completion outcomes, otherwise they are conflated]
-- Based on randomization assignment to in-person versus telehealth delivery; 
-  participants who transitioned modalities due to COVID-19 were classified according to their original assignment for ITT purposes. 
-```{r engage adjust}
-# Model treatment engagement and completion as ITT outcomes,
-# not a group descriptor
-
-# Initiation model (>0 sessions), ITT
-initiation_model_itt <- glm(
-  initiated ~ as.factor(modality_assign) + as.factor(site_new) + ssi,
-  data = plf_data_itt,
-  family = binomial
-)
-
-summary(initiation_model_itt)
-exp(cbind(
-  OR = coef(initiation_model_itt),
-  confint(initiation_model_itt)
-))
-
-# Engagement model (> 5 sessions) - ITT for revisions,
-# But also checking not ITT (or else inflated by initiation)
-engagement_model_itt <- glm(
-  six_sess ~ as.factor(modality_assign) + as.factor(site_new) + ssi,
-  data = plf_data_itt,
-  family = binomial
-)
-
-summary(engagement_model_itt)
-exp(cbind(
-  OR = coef(engagement_model_itt),
-  confint(engagement_model_itt)
-))
-
-engagement_model_mitt <- glm(
-  six_sess ~ as.factor(modality_f) + as.factor(site_new) + ssi_bl,
-  data = plf_data_treatment_sens[plf_data_treatment_sens$month == 0, ],
-  family = binomial
-)
-
-summary(engagement_model_mitt)
-exp(cbind(
-  OR = coef(engagement_model_mitt),
-  confint(engagement_model_mitt)
-))
-
-# Completion model (10+ sessions) - ITT for revisions,
-# But also checking not ITT (or else inflated by initiation)
-completion_model_itt <- glm(
-  completer ~ as.factor(modality_assign) + as.factor(site_new) + ssi,
-  data = plf_data_itt,
-  family = binomial
-)
-
-summary(completion_model_itt)
-exp(cbind(
-  OR = coef(completion_model_itt),
-  confint(completion_model_itt)
-))
-
-completion_model_mitt <- glm(
-  completer ~ as.factor(modality_f) + as.factor(site_new) + ssi_bl,
-  data = plf_data_treatment_sens[plf_data_treatment_sens$month == 0, ],
-  family = binomial
-)
-
-summary(completion_model_mitt)
-exp(cbind(
-  OR = coef(completion_model_mitt),
-  confint(completion_model_mitt)
-))
-
-# Session count model - ITT for revisions,
-# But also checking not ITT (or else inflated by initiation)
-
-# Check for overdispersion
-mean(plf_data_itt$n_sessions_attended, na.rm = TRUE)
-var(plf_data_itt$n_sessions_attended, na.rm = TRUE)
-# Variance is > mean, so use a negative binomial model
-
-attendance_model_itt <- glmmTMB(
-  n_sessions_attended ~ as.factor(modality_assign) + ssi + as.factor(site_new),
-  data = plf_data_itt,
-  family = nbinom2
-)
-
-summary(attendance_model_itt)
-
-attendance_model_mitt <- glmmTMB(
-  n_sessions_attended ~ as.factor(modality_f)
-    + as.factor(site_new)
-    + ssi_bl,
-  data = plf_data_treatment_sens[plf_data_treatment_sens$month == 0, ],
-  family = nbinom2
-)
-
-summary(attendance_model_mitt)
-```
-
-# Were there *within-group* improvements in suicide-related coping?
-```{r within group}
-# Make data wide for paired t tests
-plf_data_treatment_sens_wide <- plf_data_treatment_sens %>%
-  filter(month %in% c(0, 3, 6, 12)) %>%
-  select(id, month, srcs17, srcse, srcsi, ssi, modality_type_new) %>%
-  pivot_wider(
-    names_from = month,
-    values_from = c(srcs17, srcse, srcsi, ssi),
-    names_glue = "{.value}_month{month}"
+    median_sessions = median(n_sessions_attended_clean, na.rm = TRUE),
+    IQR_sessions = IQR(n_sessions_attended_clean, na.rm = TRUE)
   )
 
-# In-person tests
-paired_change_IP <- jmv::ttestPS(
-  data = plf_data_treatment_sens_wide[plf_data_treatment_sens_wide$modality_type_new == 0, ],
-  pairs = list(
-    list(
-      i1 = "srcs17_month0",
-      i2 = "srcs17_month3"
-    ),
-    list(
-      i1 = "srcs17_month0",
-      i2 = "srcs17_month6"
-    ),
-    list(
-      i1 = "srcs17_month0",
-      i2 = "srcs17_month12"
-    ),
-    list(
-      i1 = "srcse_month0",
-      i2 = "srcse_month3"
-    ),
-    list(
-      i1 = "srcse_month0",
-      i2 = "srcse_month6"
-    ),
-    list(
-      i1 = "srcse_month0",
-      i2 = "srcse_month12"
-    ),
-    list(
-      i1 = "srcsi_month0",
-      i2 = "srcsi_month3"
-    ),
-    list(
-      i1 = "srcsi_month0",
-      i2 = "srcsi_month6"
-    ),
-    list(
-      i1 = "srcsi_month0",
-      i2 = "srcsi_month12"
-    ),
-    list(
-      i1 = "ssi_month0",
-      i2 = "ssi_month3"
-    )
-  ),
-  wilcoxon = TRUE,
-  norm = TRUE,
-  meanDiff = TRUE,
-  ci = FALSE,
-  effectSize = TRUE,
-  ciES = FALSE,
-  desc = TRUE
-)
-
-# Tele-health tests
-paired_change_TH <- jmv::ttestPS(
-  data = plf_data_treatment_sens_wide[plf_data_treatment_sens_wide$modality_type_new == 1, ],
-  pairs = list(
-    list(
-      i1 = "srcs17_month0",
-      i2 = "srcs17_month3"
-    ),
-    list(
-      i1 = "srcs17_month0",
-      i2 = "srcs17_month6"
-    ),
-    list(
-      i1 = "srcs17_month0",
-      i2 = "srcs17_month12"
-    ),
-    list(
-      i1 = "srcse_month0",
-      i2 = "srcse_month3"
-    ),
-    list(
-      i1 = "srcse_month0",
-      i2 = "srcse_month6"
-    ),
-    list(
-      i1 = "srcse_month0",
-      i2 = "srcse_month12"
-    ),
-    list(
-      i1 = "srcsi_month0",
-      i2 = "srcsi_month3"
-    ),
-    list(
-      i1 = "srcsi_month0",
-      i2 = "srcsi_month6"
-    ),
-    list(
-      i1 = "srcsi_month0",
-      i2 = "srcsi_month12"
-    ),
-    list(
-      i1 = "ssi_month0",
-      i2 = "ssi_month3"
-    )
-  ),
-  wilcoxon = TRUE,
-  norm = TRUE,
-  meanDiff = TRUE,
-  ci = FALSE,
-  effectSize = TRUE,
-  ciES = FALSE,
-  desc = TRUE
-)
-
-# Full sample tests
-paired_change_full <- jmv::ttestPS(
-  data = plf_data_treatment_sens_wide,
-  pairs = list(
-    list(
-      i1 = "srcs17_month0",
-      i2 = "srcs17_month3"
-    ),
-    list(
-      i1 = "srcs17_month0",
-      i2 = "srcs17_month6"
-    ),
-    list(
-      i1 = "srcs17_month0",
-      i2 = "srcs17_month12"
-    ),
-    list(
-      i1 = "srcse_month0",
-      i2 = "srcse_month3"
-    ),
-    list(
-      i1 = "srcse_month0",
-      i2 = "srcse_month6"
-    ),
-    list(
-      i1 = "srcse_month0",
-      i2 = "srcse_month12"
-    ),
-    list(
-      i1 = "srcsi_month0",
-      i2 = "srcsi_month3"
-    ),
-    list(
-      i1 = "srcsi_month0",
-      i2 = "srcsi_month6"
-    ),
-    list(
-      i1 = "srcsi_month0",
-      i2 = "srcsi_month12"
-    ),
-    list(
-      i1 = "ssi_month0",
-      i2 = "ssi_month3"
-    )
-  ),
-  wilcoxon = TRUE,
-  norm = TRUE,
-  meanDiff = TRUE,
-  ci = FALSE,
-  effectSize = TRUE,
-  ciES = FALSE,
-  desc = TRUE
-)
-# In-person
-paired_change_IP
-
-# Telehealth
-paired_change_TH
-
-# Full sample
-paired_change_full
+# Raw count and % of those initiated, engaged, completed by modality
+plf_data_baseline_sens %>%
+  group_by(modality_type_new) %>%
+  summarise(
+    n = n(),
+    initiated_n = sum(initiated_clean, na.rm = TRUE),
+    initiated_pct = mean(initiated_clean, na.rm = TRUE) * 100,
+    engaged_n = sum(six_sess_clean, na.rm = TRUE),
+    engaged_pct = mean(six_sess_clean, na.rm = TRUE) * 100,
+    completed_n = sum(completer_clean, na.rm = TRUE),
+    completed_pct = mean(completer_clean, na.rm = TRUE) * 100
+  )
 ```
 
 # Multilevel models with orthogonal polynomial contrasts for time
@@ -459,7 +195,7 @@ tab_model(
 )
 ```
 
-# Primary models
+# Models with linear and quadratic effects
 ```{r mlms orthogonal}
 # plf_data_treatment_sens$month_factor <- factor(plf_data_treatment_sens$month, ordered = TRUE)
 # contrasts(plf_data_treatment_sens$month_factor) <- contr.poly(length(unique(plf_data_treatment_sens$month_factor)))
@@ -509,60 +245,156 @@ lme.dscore(srce_model_xcubic, data = plf_data_treatment_sens, type = "lme4")
 lme.dscore(srci_model_xcubic, data = plf_data_treatment_sens, type = "lme4")
 
 # Save the models
-saveRDS(src_model_xcubic, file = "03_Output/src_model_xcubic.rds")
-saveRDS(srce_model_xcubic, file = "03_Output/srce_model_xcubic.rds")
-saveRDS(srci_model_xcubic, file = "03_Output/srci_model_xcubic.rds")
+# saveRDS(src_model_xcubic, file = "03_Output/src_model_xcubic.rds")
+# saveRDS(srce_model_xcubic, file = "03_Output/srce_model_xcubic.rds")
+# saveRDS(srci_model_xcubic, file = "03_Output/srci_model_xcubic.rds")
 ```
 
-Sensitivity models excluding the CTVCS site
-```{r mlms orthogonal sensitivity}
-# Filter the data
-plf_data_treatment_sens_xtx <- plf_data_treatment_sens %>%
-  filter(site_new != 4)
+# Test quadratic vs linear model fit (orthogonal polynomials)
+```{r quad v linear}
+# global coping
+src_linear <- lmer(
+  srcs17 ~ poly(as.numeric(month), 1) * modality_f +
+    poly(as.numeric(month), 1) * ssi_bl + site_new_f + (1 | id),
+  data = plf_data_treatment_sens
+)
+anova(src_linear, src_model_xcubic) 
 
-src_model_xcubicxtx <- lmer(
-  srcs17 ~ poly(as.numeric(month), 2) * modality_f +
-    poly(as.numeric(month), 2) * ssi_bl +
+# external coping
+srce_linear <- lmer(
+  srcse ~ poly(as.numeric(month), 1) * modality_f +
+    poly(as.numeric(month), 1) * ssi_bl + site_new_f + (1 | id),
+  data = plf_data_treatment_sens
+)
+anova(srce_linear, srce_model_xcubic)
+
+# internal coping
+srci_linear <- lmer(
+  srcsi ~ poly(as.numeric(month), 1) * modality_f +
+    poly(as.numeric(month), 1) * ssi_bl + site_new_f + (1 | id),
+  data = plf_data_treatment_sens
+)
+anova(srci_linear, srci_model_xcubic)
+```
+
+# Center time & refit models
+```{r center time}
+plf_data_treatment_sens$month_num <- as.numeric(plf_data_treatment_sens$month)
+plf_data_treatment_sens$month_centered <- plf_data_treatment_sens$month_num # baseline-centered
+plf_data_treatment_sens$month2_centered <- plf_data_treatment_sens$month_centered^2
+
+# Refit models with interpretable centered time
+# Global SRC
+src_model_final <- lmer(
+  srcs17 ~ month_centered * modality_f +
+    month2_centered * modality_f +
+    month_centered * ssi_bl +
+    month2_centered * ssi_bl +
+    site_new_f + (1 | id),
+  data = plf_data_treatment_sens
+)
+
+# External coping
+srce_model_final <- lmer(
+  srcse ~ month_centered * modality_f +
+    month2_centered * modality_f +
+    month_centered * ssi_bl +
+    month2_centered * ssi_bl +
+    site_new_f + (1 | id),
+  data = plf_data_treatment_sens
+)
+
+# Internal coping
+srci_model_final <- lmer(
+  srcsi ~ month_centered * modality_f +
+    month2_centered * modality_f +
+    month_centered * ssi_bl +
+    month2_centered * ssi_bl +
+    site_new_f + (1 | id),
+  data = plf_data_treatment_sens
+)
+
+summary(src_model_final)
+summary(srce_model_final)
+summary(srci_model_final)
+
+tab_model(src_model_final)
+tab_model(srce_model_final)
+tab_model(srci_model_final)
+
+tab_model(list(
+  "Global SRC" = src_model_final,
+  "External Coping" = srce_model_final,
+  "Internal Coping" = srci_model_final
+))
+
+# Effect sizes
+lme.dscore(src_model_final, data = plf_data_treatment_sens, type = "lme4")
+lme.dscore(srce_model_final, data = plf_data_treatment_sens, type = "lme4")
+lme.dscore(srci_model_final, data = plf_data_treatment_sens, type = "lme4")
+
+# Save new models
+saveRDS(src_model_final, "03_Output/src_model_final_centered.rds")
+saveRDS(srce_model_final, "03_Output/srce_model_final_centered.rds")
+saveRDS(srci_model_final, "03_Output/srci_model_final_centered.rds")
+```
+
+# Omnibus LRT
+```{r omnibus LRT}
+# Refit all models with ML
+src_model_final_ml <- update(src_model_final, REML = FALSE)
+srce_model_final_ml <- update(srce_model_final, REML = FALSE)
+srci_model_final_ml <- update(srci_model_final, REML = FALSE)
+
+# Global SRC LRT
+src_null <- lmer(
+  srcs17 ~
+    month_centered +
+    month2_centered +
+    modality_f +
+    month_centered * ssi_bl +
+    month2_centered * ssi_bl +
     site_new_f +
     (1 | id),
-  data = plf_data_treatment_sens_xtx
+  data = plf_data_treatment_sens,
+  REML = FALSE
 )
 
-summary(src_model_xcubicxtx)
-tab_model(src_model_xcubicxtx)
+anova(src_null, src_model_final_ml)
 
-srce_model_xcubicxtx <- lmer(
-  srcse ~ poly(as.numeric(month), 2) * modality_f +
-    poly(as.numeric(month), 2) * ssi_bl +
+# External SRC LRT
+srce_null <- lmer(
+  srcse ~
+    month_centered +
+    month2_centered +
+    modality_f +
+    month_centered * ssi_bl +
+    month2_centered * ssi_bl +
     site_new_f +
     (1 | id),
-  data = plf_data_treatment_sens_xtx
+  data = plf_data_treatment_sens,
+  REML = FALSE
 )
 
-summary(srce_model_xcubicxtx)
-tab_model(srce_model_xcubicxtx)
 
-srci_model_xcubicxtx <- lmer(
-  srcsi ~ poly(as.numeric(month), 2) * modality_f +
-    poly(as.numeric(month), 2) * ssi_bl +
+anova(srce_null, srce_model_final_ml)
+
+# Internal SRC LRT
+srci_null <- lmer(
+  srcsi ~
+    month_centered +
+    month2_centered +
+    modality_f +
+    month_centered * ssi_bl +
+    month2_centered * ssi_bl +
     site_new_f +
     (1 | id),
-  data = plf_data_treatment_sens_xtx
+  data = plf_data_treatment_sens,
+  REML = FALSE
 )
 
-summary(srci_model_xcubicxtx)
-tab_model(srci_model_xcubicxtx)
 
-tab_model(
-  src_model_xcubicxtx,
-  srce_model_xcubicxtx,
-  srci_model_xcubicxtx
-)
-
-# Save the models
-saveRDS(src_model_xcubicxtx, file = "03_Output/src_model_xcubicxtx.rds")
-saveRDS(srce_model_xcubicxtx, file = "03_Output/srce_model_xcubicxtx.rds")
-saveRDS(srci_model_xcubicxtx, file = "03_Output/srci_model_xcubicxtx.rds")
+anova(srci_null, srci_model_final_ml)
 ```
 
 # Save analysis data
@@ -573,4 +405,3 @@ write.csv(plf_data_treatment_sens,
   row.names = FALSE
 )
 ```
-

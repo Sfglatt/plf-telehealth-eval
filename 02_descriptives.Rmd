@@ -42,7 +42,7 @@ if (!dir.exists("02_Output")) {
 Created in 01_data.Rmd
 ```{r data}
 # Stratified sample
-plf_data_filtered <- read.csv("01_Output/treatment_data_sg_2026-01-12.csv")
+plf_data_filtered <- read.csv("01_Output/treatment_data_sg_2026-05-12.csv")
 
 # Filter to pre and post treatment
 plf_data_treatment <- plf_data_filtered %>%
@@ -56,15 +56,21 @@ plf_data_treatment_sens <- plf_data_treatment %>%
 plf_data_baseline <- plf_data_filtered %>%
   filter(month == 0)
 
+table(plf_data_baseline$modality_type)
+# 22 in person, 44 telehealth, 4 mixed-modal
+# 26 assigned in person, 44 assigned in telehealth
+
 # Remove mixed-modal participants from baseline dataset
 plf_data_baseline_sens <- plf_data_baseline %>%
   filter(modality_type != 3)
 
-# Check how many are missing baseline SI (covariate)
+# Check how many are missing baseline suicidal ideation (covariate)
 sum(is.na(plf_data_baseline_sens$ssi))
 
 # ITT baseline sample
-plf_data_itt <- read.csv("01_Output/initiation_data_sg_2026-01-12.csv")
+plf_data_itt <- read.csv("01_Output/initiation_data_sg_2026-05-12.csv")
+table(plf_data_itt$modality_assign)
+# 46 assigned in-person, 55 assigned in telehealth
 ```
 
 # Sample N descriptives
@@ -73,6 +79,7 @@ plf_data_itt <- read.csv("01_Output/initiation_data_sg_2026-01-12.csv")
 table(plf_data_baseline$modality_type)
 table(plf_data_baseline_sens$modality_type)
 table(plf_data_baseline_sens$Attendance)
+table(plf_data_baseline_sens$Attendance_clean)
 
 # VA Site
 table(plf_data_baseline$site)
@@ -89,27 +96,47 @@ table(
 plf_data_treatment_descriptives <- plf_data_treatment_sens %>%
   dplyr::select(modality_type_new, month, srcs17, srcse, srcsi)
 
+n_distinct(plf_data_treatment_sens$id)
+
 months_to_include <- c(0, 3, 6, 12)
 
 # Function for tidier results
 describe_tidy <- function(data, modality_label) {
-  desc_list <- psych::describeBy(data[, -c(1, 2)], group = data$month, mat = FALSE)
+  desc_list <- psych::describeBy(
+    data[, -c(1, 2)],
+    group = data$month,
+    mat = FALSE
+  )
+
   desc_list <- desc_list[names(desc_list) %in% as.character(months_to_include)]
 
-  # make a tidy table
   bind_rows(lapply(names(desc_list), function(m) {
-    tbl <- desc_list[[m]]
-    tbl %>%
-      mutate(
-        Month = m,
-        Modality = modality_label,
-        `Mean (SD)` = sprintf("%.2f (%.2f)", mean, sd),
-        `Median [Range]` = sprintf("%.2f [%.2f - %.2f]", median, min, max)
-      ) %>%
-      select(vars, Month, Modality, n, `Mean (SD)`, `Median [Range]`, skew, kurtosis)
+    tbl <- as.data.frame(desc_list[[m]])
+
+    tbl$Variable <- rownames(tbl)
+
+    out <- data.frame(
+      Variable = tbl$Variable,
+      Month = as.numeric(m),
+      Modality = modality_label,
+      n = tbl$n,
+      `Mean (SD)` = sprintf("%.2f (%.2f)", tbl$mean, tbl$sd),
+      `Median [Range]` = sprintf(
+        "%.2f [%.2f - %.2f]",
+        tbl$median,
+        tbl$min,
+        tbl$max
+      ),
+      skew = round(tbl$skew, 2),
+      kurtosis = round(tbl$kurtosis, 2),
+      stringsAsFactors = FALSE
+    )
+
+    rownames(out) <- NULL
+
+    out
   }))
 }
-
 # Descriptives for full sample and statified by modality
 full_tidy <- describe_tidy(plf_data_treatment_descriptives, "Full")
 ip_tidy <- describe_tidy(filter(plf_data_treatment_descriptives, modality_type_new == 0), "In-person")
@@ -119,10 +146,10 @@ th_tidy <- describe_tidy(filter(plf_data_treatment_descriptives, modality_type_n
 prepost_all_tidy <- bind_rows(full_tidy, ip_tidy, th_tidy)
 
 # Save CSV
-write.csv(prepost_all_tidy,
-  file = paste0("02_Output/pre_post_descriptives_sg_", format(Sys.Date(), "%Y-%m-%d"), ".csv"),
-  row.names = FALSE
-)
+# write.csv(prepost_all_tidy,
+#  file = paste0("02_Output/pre_post_descriptives_sg_", format(Sys.Date(), "%Y-%m-%d"), ".csv"),
+#  row.names = FALSE
+# )
 ```
 
 # Check for any model covariates
@@ -196,11 +223,19 @@ report::report(chi_square_result_itt)
 # Suicidal ideation, depression symptom severity, etc
 Descriptives and t-tests 
 ```{r covariates}
+table(plf_data_baseline$modality_type)
+
+# Make mixed-modal into in-person because this is baseline descriptives/cohort characterization and they were assigned in-person. We will keep them in the ITT sample as assigned (in-person) but remove them from the MLM sample since they are a mix of both modalities and we want to characterize the two groups as cleanly as possible for the MLM sample.
+plf_data_baseline <- plf_data_baseline %>%
+  mutate(modality_type_assign = if_else(modality_type == 3, 1, modality_type))
+
+table(plf_data_baseline$modality_type_assign)
+
 # Isolate data
-covariates_mlm <- plf_data_baseline_sens %>%
+covariates_mlm <- plf_data_baseline %>%
   dplyr::select(
-    modality_type_new,
-    bhs, atspph, bdi, ssi, inq_pb, inq_tb, srcs17,
+    modality_type_assign,
+    bhs, atspph, bdi, ssi, inq_pb, inq_tb, srcs17, srcse, srcsi,
     Number_MH_encounters,
     age_demo
   )
@@ -208,16 +243,15 @@ covariates_mlm <- plf_data_baseline_sens %>%
 covariates_itt <- plf_data_itt %>%
   dplyr::select(
     modality_assign,
-    bhs, atspph, bdi, ssi, inq_pb, inq_tb, srcs17,
+    bhs, atspph, bdi, ssi, inq_pb, inq_tb, srcs17, srcse, srcsi,
     Number_MH_encounters,
     age_demo
   )
 
-
 # Look at descriptive tables, main mlm sample
-covariates_mlm <- psych::describeBy(covariates_mlm[, -1], covariates_mlm$modality_type_new)
-in_person_table_mlm <- covariates_mlm$"0"
-telehealth_table_mlm <- covariates_mlm$"1"
+covariates_mlm <- psych::describeBy(covariates_mlm[, -1], covariates_mlm$modality_type_assign)
+in_person_table_mlm <- covariates_mlm$"1"
+telehealth_table_mlm <- covariates_mlm$"2"
 
 in_person_table_mlm
 telehealth_table_mlm
@@ -232,13 +266,14 @@ telehealth_table_itt
 
 # t-tests for main mlm sample
 t_test_covariates_mlm <- jmv::ttestIS(
-  formula = srcs17 + ssi + bhs + atspph + bdi +
+  formula = srcs17 + srcse + srcsi + ssi + bhs + atspph + bdi +
     inq_tb + inq_pb + bpaqpa + bpaqva +
-    Number_MH_encounters + age_demo ~ modality_type_new,
-  data = plf_data_baseline_sens %>%
-    dplyr::filter(!is.na(ssi)),
+    Number_MH_encounters + age_demo ~ modality_type_assign,
+  data = plf_data_baseline
+  #  %>% dplyr::filter(!is.na(ssi))
+  ,
   vars = vars(
-    srcs17, ssi, bhs, atspph, bdi,
+    srcs17, srcse, srcsi, ssi, bhs, atspph, bdi,
     inq_tb, inq_pb, bpaqpa, bpaqva,
     Number_MH_encounters, age_demo
   ),
@@ -254,13 +289,13 @@ t_test_covariates_mlm
 
 # t-tests for itt sample
 t_test_covariates_itt <- jmv::ttestIS(
-  formula = srcs17 + ssi + bhs + atspph + bdi +
+  formula = srcs17 + srcse + srcsi + ssi + bhs + atspph + bdi +
     inq_tb + inq_pb + bpaqpa + bpaqva +
     Number_MH_encounters + age_demo ~ modality_assign,
   data = plf_data_itt %>%
     dplyr::filter(!is.na(ssi)),
   vars = vars(
-    srcs17, ssi, bhs, atspph, bdi,
+    srcs17, srcse, srcsi, ssi, bhs, atspph, bdi,
     inq_tb, inq_pb, bpaqpa, bpaqva,
     Number_MH_encounters, age_demo
   ),
@@ -272,19 +307,29 @@ t_test_covariates_itt <- jmv::ttestIS(
 )
 
 t_test_covariates_itt
+```
 
-# Check baseline correlations between suicide-related coping & suicidal ideation
-cor.test(plf_data_baseline_sens$ssi, plf_data_baseline_sens$srcs17)
-cor.test(plf_data_baseline_sens$ssi, plf_data_baseline_sens$srcse)
-cor.test(plf_data_baseline_sens$ssi, plf_data_baseline_sens$srcsi)
+# Save descriptive tables
+```{r descriptives}
+write.csv(
+  in_person_table_mlm,
+  paste0("02_Output/baseline_table_mlm_inperson_sg_", Sys.Date(), ".csv")
+)
 
-# Telehealth
-table(plf_data_baseline_sens[plf_data_baseline_sens$modality_type_new == 1, ]$ssi)
-summary(plf_data_baseline_sens[plf_data_baseline_sens$modality_type_new == 1, ]$ssi)
+write.csv(
+  telehealth_table_mlm,
+  paste0("02_Output/baseline_table_mlm_telehealth_sg_", Sys.Date(), ".csv")
+)
 
-# In-person
-table(plf_data_baseline_sens[plf_data_baseline_sens$modality_type_new == 0, ]$ssi)
-summary(plf_data_baseline_sens[plf_data_baseline_sens$modality_type_new == 0, ]$ssi)
+write.csv(
+  in_person_table_itt,
+  paste0("02_Output/baseline_table_itt_inperson_sg_", Sys.Date(), ".csv")
+)
+
+write.csv(
+  telehealth_table_itt,
+  paste0("02_Output/baseline_table_itt_telehealth_sg_", Sys.Date(), ".csv")
+)
 ```
 
 # Scale reliability
@@ -350,7 +395,7 @@ ltm::cronbach.alpha(
 ltm::cronbach.alpha(
   plf_data_baseline_sens %>%
     select(matches("^q\\d{2}_bhs$")) %>%
-    filter(rowSums(is.na(.)) == 0), 
+    filter(rowSums(is.na(.)) == 0),
   CI = TRUE
 )
 
@@ -358,7 +403,7 @@ ltm::cronbach.alpha(
 ltm::cronbach.alpha(
   plf_data_itt %>%
     select(matches("^q\\d{2}_bhs$")) %>%
-    filter(rowSums(is.na(.)) == 0), 
+    filter(rowSums(is.na(.)) == 0),
   CI = TRUE
 )
 
@@ -366,7 +411,7 @@ ltm::cronbach.alpha(
 ltm::cronbach.alpha(
   plf_data_baseline_sens %>%
     select(matches("^q\\d{2}_bdi$")) %>%
-    filter(rowSums(is.na(.)) == 0), 
+    filter(rowSums(is.na(.)) == 0),
   CI = TRUE
 )
 
@@ -374,7 +419,7 @@ ltm::cronbach.alpha(
 ltm::cronbach.alpha(
   plf_data_itt %>%
     select(matches("^q\\d{2}_bdi$")) %>%
-    filter(rowSums(is.na(.)) == 0), 
+    filter(rowSums(is.na(.)) == 0),
   CI = TRUE
 )
 
@@ -398,13 +443,12 @@ ltm::cronbach.alpha(
 ```
 
 # Demographics
-- Full sample assigned to treatment (96)
-  Telehealth (51)
-  In-person (45)
-- Full sample that received treatment (64)
-  Telehealth (43)
-  In-person (21)
-[all who aren't missing baseline suicidal ideation]
+- Full sample assigned to treatment (101)
+  Telehealth (55)
+  In-person (46)
+- Full sample that initiated treatment (70)
+  Telehealth (44)
+  In-person (26)
 ```{r demo function}
 demo_vars <- list(
   Sex = list(
@@ -535,8 +579,8 @@ demo_vars <- list(
   # 1 = yes
   # 2 = no
 
-  Attendance = list(
-    var = "Attendance",
+  Attendance_clean = list(
+    var = "Attendance_clean",
     levels = c("Did not initiate", "Initiated", "Six Sessions", "Completer"),
     labels = c("Did not initiate", "Initiated", "Six Sessions", "Completer")
     # "initiated" = 0 (no), 1 (yes)
@@ -579,7 +623,143 @@ make_demographic_table <- function(data, N, demo_vars) {
 ```
 
 ## Demographic tables (both samples + divided)
-```{r demo table}
+
+These are demographic tables corresponding to the initial sample, which includes mixed-modal participnts (n=4) in the in-person sample since they were *assigned* in-person. 
+```{r demo table paper}
+# Demographic table for N = 70
+demographic_table_70 <- make_demographic_table(
+  data = plf_data_baseline,
+  N = 70,
+  demo_vars = demo_vars
+)
+
+# Demographic table for those who were assigned in-person and initiated
+plf_data_baseline_ip <- plf_data_baseline %>%
+  dplyr::filter(modality_type_assign == 1)
+
+demographic_table_ip <- make_demographic_table(
+  data = plf_data_baseline_ip,
+  N = 26,
+  demo_vars = demo_vars
+)
+
+# Demographic table for those who were assiged in telehealth and initiated
+plf_data_baseline_th <- plf_data_baseline %>%
+  dplyr::filter(modality_type_assign == 2)
+
+demographic_table_th <- make_demographic_table(
+  data = plf_data_baseline_th,
+  N = 44,
+  demo_vars = demo_vars
+)
+
+# Demographic table for full PLF arm
+demographic_table_101 <- make_demographic_table(
+  data = plf_data_itt,
+  N = 101,
+  demo_vars = demo_vars
+)
+
+# Demographic table for those assigned to in-person
+plf_data_itt_baseline_ip <- plf_data_itt %>%
+  dplyr::filter(modality_assign == 0)
+
+demographic_table_46 <- make_demographic_table(
+  data = plf_data_itt_baseline_ip,
+  N = 46,
+  demo_vars = demo_vars
+)
+
+# Demograhic table for those assigned to telehealth
+plf_data_itt_baseline_th <- plf_data_itt %>%
+  dplyr::filter(modality_assign == 1)
+
+demographic_table_55 <- make_demographic_table(
+  data = plf_data_itt_baseline_th,
+  N = 55,
+  demo_vars = demo_vars
+)
+
+# Merge tables
+demo_70 <- demographic_table_70 %>%
+  rename(`Total received (N = 70)` = `n (%)`)
+
+demo_th <- demographic_table_th %>%
+  rename(`Received telehealth (N = 44)` = `n (%)`)
+
+demo_ip <- demographic_table_ip %>%
+  rename(`Received in-person (N = 26)` = `n (%)`)
+
+demo_101 <- demographic_table_101 %>%
+  rename(`Total assigned (N = 101)` = `n (%)`)
+
+demo_46 <- demographic_table_46 %>%
+  rename(`Assigned in-person (N = 46)` = `n (%)`)
+
+demo_55 <- demographic_table_55 %>%
+  rename(`Assigned telehealth (N = 55)` = `n (%)`)
+
+demographic_table <- demo_70 %>%
+  full_join(demo_th,
+    by = c("Characteristic", "Category")
+  ) %>%
+  full_join(demo_ip,
+    by = c("Characteristic", "Category")
+  ) %>%
+  full_join(demo_101,
+    by = c("Characteristic", "Category")
+  ) %>%
+  full_join(demo_46,
+    by = c("Characteristic", "Category")
+  ) %>%
+  full_join(demo_55,
+    by = c("Characteristic", "Category")
+  ) %>%
+  arrange(Characteristic)
+
+
+demographic_table
+
+# Save combined demo table(s)
+write.csv(
+  demographic_table,
+  paste0("02_Output/demo_tables_sg_", Sys.Date(), ".csv")
+)
+
+# Age
+# Total initiated treatment (N = 70)
+nrow(plf_data_baseline)
+summary(plf_data_baseline$age_demo)
+sd(plf_data_baseline$age_demo, na.rm = TRUE)
+
+# Telehealth (n = 44)
+nrow(plf_data_baseline_th)
+summary(plf_data_baseline_th$age_demo)
+sd(plf_data_baseline_th$age_demo, na.rm = TRUE)
+
+# In-person (N = 26)
+nrow(plf_data_baseline_ip)
+summary(plf_data_baseline_ip$age_demo)
+sd(plf_data_baseline_ip$age_demo, na.rm = TRUE)
+
+# Total assigned to treatment (N = 101)
+nrow(plf_data_itt)
+summary(plf_data_itt$age_demo)
+sd(plf_data_itt$age_demo, na.rm = TRUE)
+
+# Telehealth assigned (N = 55)
+nrow(plf_data_itt_baseline_th)
+summary(plf_data_itt_baseline_th$age_demo)
+sd(plf_data_itt_baseline_th$age_demo, na.rm = TRUE)
+
+# In-person assigned (N = 46)
+nrow(plf_data_itt_baseline_ip)
+summary(plf_data_itt_baseline_ip$age_demo)
+sd(plf_data_itt_baseline_ip$age_demo, na.rm = TRUE)
+```
+
+These are demographic tables corresponding to the multilevel model sample, which excludes mixed-modal participnts (n=4) and those missing baseline suicidal ideation scores (n = 2)
+```{r demo table mlm}
 # Remove people missing baseline suicidal ideation from N = 70 who received PLF
 plf_data_baseline_sens_64 <- plf_data_baseline_sens %>%
   dplyr::filter(!is.na(ssi))
@@ -631,7 +811,7 @@ demographic_table_45 <- make_demographic_table(
   demo_vars = demo_vars
 )
 
-# Demograhic table for those assigned to telehealth
+# Demographic table for those assigned to telehealth
 plf_data_itt_baseline_th <- plf_data_itt_baseline %>%
   dplyr::filter(modality_assign == 1)
 
@@ -687,28 +867,28 @@ write.csv(
   paste0("02_Output/demo_tables_sg_", Sys.Date(), ".csv")
 )
 
-# Age 
+# Age
 # Total received treatment (N = 64)
-summary(plf_data_baseline_sens_64$age_demo) 
-sd(plf_data_baseline_sens_64$age_demo, na.rm = TRUE) 
+summary(plf_data_baseline_sens_64$age_demo)
+sd(plf_data_baseline_sens_64$age_demo, na.rm = TRUE)
 
 # Telehealth (N = 43)
-summary(plf_data_baseline_th$age_demo) 
-sd(plf_data_baseline_th$age_demo, na.rm = TRUE) 
+summary(plf_data_baseline_th$age_demo)
+sd(plf_data_baseline_th$age_demo, na.rm = TRUE)
 
 # In-person (N = 21)
-summary(data_baseline_ip $age_demo) 
-sd(plf_data_baseline_ip $age_demo, na.rm = TRUE) 
+summary(data_baseline_ip$age_demo)
+sd(plf_data_baseline_ip$age_demo, na.rm = TRUE)
 
 # Total assigned to treatment (N = 96)
-summary(plf_data_itt_baseline$age_demo) 
-sd(plf_data_itt_baseline$age_demo, na.rm = TRUE) 
+summary(plf_data_itt_baseline$age_demo)
+sd(plf_data_itt_baseline$age_demo, na.rm = TRUE)
 
 # Telehealth assigned (N = 51)
-summary(plf_data_itt_baseline_th$age_demo) 
-sd(plf_data_itt_baseline_th$age_demo, na.rm = TRUE) 
+summary(plf_data_itt_baseline_th$age_demo)
+sd(plf_data_itt_baseline_th$age_demo, na.rm = TRUE)
 
 # In-person assigned (N = 45)
 summary(plf_data_itt_baseline_ip$age_demo)
-sd(plf_data_itt_baseline_ip$age_demo, na.rm = TRUE) 
+sd(plf_data_itt_baseline_ip$age_demo, na.rm = TRUE)
 ```

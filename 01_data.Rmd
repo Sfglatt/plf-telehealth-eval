@@ -69,19 +69,23 @@ colnames(sessions) <- gsub("\\s+", "_", colnames(sessions))
 
 # Verify the number of participants
 length(unique(sessions$id)) # N = 101
+```
 
+# Original attendance variable 
+```{r session attendance}
 # Make a 'total number of sessions attended' variable.
-# Add up the number of dates they attended.
+# Add up the number of dates they attended (the *number* of unique dates per person for a total session count)
+
 sessions <- sessions %>%
   group_by(id) %>%
-  mutate(n_attended = if_else(arm == 1, sum(!is.na(date)), NA))
+  mutate(n_new = if_else(arm == 1, sum(!is.na(date)), NA))
 
 # Make a "treatment engaged" and "treatment completed" variables based on the number of sessions they attended
-sessions$initiated <- ifelse(sessions$n_attended > 0, 1, 0)
-sessions$six_sess <- ifelse(sessions$n_attended > 5, 1, 0)
-sessions$completer <- ifelse(sessions$n_attended >= 10, 1, 0)
+sessions$initiated <- ifelse(sessions$n_new > 0, 1, 0)
+sessions$six_sess <- ifelse(sessions$n_new > 5, 1, 0)
+sessions$completer <- ifelse(sessions$n_new >= 10, 1, 0)
 
-# Make a single variable for all 
+# Make a single variable for all
 sessions <- sessions %>%
   mutate(
     Attendance = case_when(
@@ -118,6 +122,204 @@ table(unique(sessions[c("id", "type_new")])$type_new)
 table(unique(sessions[c("id", "type_new_NA")])$type_new_NA)
 ```
 
+# New session attendance
+```{r session attendance new}
+# New sessions column with changed format
+sessions <- sessions %>%
+  mutate(
+    sessn_dup = tolower(sessn), # duplicate + lowercase
+    sessn_dup = trimws(sessn_dup),
+
+    # remove text ONLY if it follows a number + space (e.g., "session 5 cont". but "5a" stays the same)
+    sessn_dup = gsub("(\\d)\\s+cont.*$", "\\1", sessn_dup)
+  )
+
+# Put sessn_dup next to sessn on the right
+# Verify
+View(sessions) # Good.
+
+# duplicates within person
+# same id + same cleaned session
+dup_sessions <- sessions %>%
+  group_by(id, sessn_dup) %>%
+  filter(n() > 1) %>%
+  arrange(id, sessn_dup)
+
+dup_sessions
+
+# new session count excluding duplicates
+sessions <- sessions %>%
+  group_by(id) %>%
+  mutate(
+    n_new_noduplicates = n_distinct(sessn_dup[!is.na(date) & arm == 1])
+  )
+
+# New initiator/engaged/completer variables
+sessions <- sessions %>%
+  mutate(
+    initiated_nodup = ifelse(n_new_noduplicates > 0, 1, 0),
+    six_sess_nodup  = ifelse(n_new_noduplicates > 5, 1, 0),
+    completer_nodup = ifelse(n_new_noduplicates >= 10, 1, 0)
+  )
+
+# New counts
+person_level <- sessions %>%
+  group_by(id) %>%
+  summarise(
+    n_new = first(n_new),
+    n_new_noduplicates = first(n_new_noduplicates),
+    initiated = first(initiated),
+    initiated_nodup = first(initiated_nodup),
+    six_sess = first(six_sess),
+    six_sess_nodup = first(six_sess_nodup),
+    completer = first(completer),
+    completer_nodup = first(completer_nodup)
+  )
+
+summary(person_level$n_new)
+summary(person_level$n_new_noduplicates)
+
+# Initiated
+sum(person_level$initiated, na.rm = TRUE)
+sum(person_level$initiated_nodup, na.rm = TRUE)
+
+# 6+ sessions
+sum(person_level$six_sess, na.rm = TRUE)
+sum(person_level$six_sess_nodup, na.rm = TRUE)
+
+# Completed (10 sessions)
+sum(person_level$completer, na.rm = TRUE)
+sum(person_level$completer_nodup, na.rm = TRUE)
+
+# Rearrange so new comes after each old
+sessions <- sessions %>%
+  relocate(
+    sessn_dup,
+    .after = sessn
+  ) %>%
+  relocate(
+    n_new_noduplicates,
+    .after = n_new
+  ) %>%
+  relocate(
+    initiated_nodup,
+    .after = initiated
+  ) %>%
+  relocate(
+    six_sess_nodup,
+    .after = six_sess
+  ) %>%
+  relocate(
+    completer_nodup,
+    .after = completer
+  )
+
+# Dataframe of people with duplicates
+dup_id <- dup_sessions %>%
+  distinct(id)
+
+sessions_dup_ids <- sessions %>%
+  filter(id %in% dup_id$id) # dataframe of people with >0 duplicate session
+
+# Session descriptions with only text (no numbers)
+# Sessions labeled with "misc" or "review":
+sessions <- sessions %>%
+  mutate(
+    misc_review = grepl("misc|review", sessn) & !is.na(sessn)
+  )
+
+# Look at them
+sessions_miscreview <- sessions %>%
+  filter(misc_review)
+sessions_miscreview
+
+# Expand to session description with no numbers
+sessions <- sessions %>%
+  mutate(
+    only_text = !grepl("[0-9]", sessn) & !is.na(sessn)
+  )
+
+# Look at them
+sessions_only_text <- sessions %>%
+  filter(only_text)
+
+sessions_only_text
+
+# Get their IDs
+sessions_text_ids <- sessions %>%
+  group_by(id) %>%
+  filter(any(!is.na(sessn) & !grepl("[0-9]", sessn))) %>%
+  ungroup()
+sessions_text_ids
+
+# How many people?
+sessions %>%
+  filter(!is.na(sessn) & !grepl("[0-9]", sessn)) %>%
+  summarise(n_ids = n_distinct(id)) # 15
+
+# New count with no duplicates (as above) & no free-text sessions identified above
+sessions <- sessions %>%
+  group_by(id) %>%
+  mutate(
+    n_new_noduplicatestext = n_distinct(
+      sessn_dup[!is.na(date) & arm == 1 & !only_text]
+    )
+  )
+
+sessions <- sessions %>%
+  mutate(
+    initiated_clean = ifelse(n_new_noduplicatestext > 0, 1, 0),
+    six_sess_clean  = ifelse(n_new_noduplicatestext > 5, 1, 0),
+    completer_clean = ifelse(n_new_noduplicatestext >= 10, 1, 0)
+  )
+
+person_level <- sessions %>%
+  group_by(id) %>%
+  summarise(
+    n_new = first(n_new),
+    n_new_noduplicates = first(n_new_noduplicates),
+    n_clean = first(n_new_noduplicatestext),
+    initiated = first(initiated),
+    initiated_nodup = first(initiated_nodup),
+    initiated_clean = first(initiated_clean),
+    six_sess = first(six_sess),
+    six_sess_nodup = first(six_sess_nodup),
+    six_sess_clean = first(six_sess_clean),
+    completer = first(completer),
+    completer_nodup = first(completer_nodup),
+    completer_clean = first(completer_clean)
+  )
+
+summary(person_level$n_new)
+summary(person_level$n_new_noduplicates)
+summary(person_level$n_clean)
+
+table(person_level$n_new)
+table(person_level$n_new_noduplicates)
+table(person_level$n_clean)
+
+# Compare drops
+sum(person_level$completer, na.rm = TRUE)
+sum(person_level$completer_nodup, na.rm = TRUE)
+sum(person_level$completer_clean, na.rm = TRUE)
+
+sum(person_level$six_sess, na.rm = TRUE)
+sum(person_level$six_sess_nodup, na.rm = TRUE)
+sum(person_level$six_sess_clean, na.rm = TRUE)
+
+# Make a new single variable for all
+sessions <- sessions %>%
+  mutate(
+    Attendance_clean = case_when(
+      completer_clean == 1 ~ "Completer",
+      six_sess_clean == 1 ~ "Six Sessions",
+      initiated_clean == 1 ~ "Initiated",
+      TRUE ~ "Did not initiate"
+    )
+  )
+```
+
+# Self-report/clinical assessment data 
 ```{r self-report}
 # Combined self-report data
 plf_data <- read.csv("~/Labs/Github/project-life-force/project-life-force/01_Created_datasets/Merged_plf_data_filtered_2025-04-09.csv")
@@ -144,9 +346,12 @@ table(plf_data[plf_data$month == 0, ]$site_new)
 # Make a labeled arm variable
 plf_data <- plf_data %>%
   dplyr::mutate(arm_label = ifelse(arm_rec == 1, "PLF", "TAU"))
+```
 
+# Add session attendance to self-report
+```{r self-report sessions}
 # Add n_sessions_attended and modality_type_new
-plf_data$n_sessions_attended <- sessions$n_attended[match(plf_data$id, sessions$id)]
+plf_data$n_sessions_attended <- sessions$n_new[match(plf_data$id, sessions$id)]
 plf_data$modality_type <- sessions$type[match(plf_data$id, sessions$id)]
 plf_data$modality_type_new <- sessions$type_new[match(plf_data$id, sessions$id)]
 plf_data$completer <- sessions$completer[match(plf_data$id, sessions$id)]
@@ -154,15 +359,27 @@ plf_data$six_sess <- sessions$six_sess[match(plf_data$id, sessions$id)]
 plf_data$initiated <- sessions$initiated[match(plf_data$id, sessions$id)]
 plf_data$Attendance <- sessions$Attendance[match(plf_data$id, sessions$id)]
 
+# Add the new attendance variables - n_new_noduplicatestext, initiated_clean, six_sess_clean, completer_clean
+plf_data$n_sessions_attended_clean <- sessions$n_new_noduplicatestext[match(plf_data$id, sessions$id)]
+plf_data$initiated_clean <- sessions$initiated_clean[match(plf_data$id, sessions$id)]
+plf_data$six_sess_clean <- sessions$six_sess_clean[match(plf_data$id, sessions$id)]
+plf_data$completer_clean <- sessions$completer_clean[match(plf_data$id, sessions$id)]
+plf_data$Attendance_clean <- sessions$Attendance_clean[match(plf_data$id, sessions$id)]
+```
 
+# Add lifetime C-SSRS to self-report
+```{r self-report cssrs}
 # Add the lifetime C-SSRS
 plf_data$q11_CSSRS_lifetime <- csrss$q11_CSSRS_lifetime[match(plf_data$id, csrss$id)]
+```
 
+# Filter the data to PLF arm and >0 sessions
+```{r filter data}
 # Filter the dataset to PLF and >0 sessions
 plf_data_filtered <- plf_data %>%
   filter(
     arm_label == "PLF",
-    n_sessions_attended > 0,
+    n_sessions_attended_clean > 0,
     month != -9
   )
 ```
@@ -215,7 +432,7 @@ intersect(
 # 083. Look at their data in the sessions vs dates tab
 sessions[sessions$id == "BX-083", ]
 dates[dates$id == "BX-083", ]
-# MG resolution: this person is in-person
+# MG resolution: this person was in-person
 
 # From this dates data, exclude people who initiated treatment
 dates_exclude <- dates %>%
@@ -225,36 +442,16 @@ dates_exclude <- dates %>%
 table(dates_exclude$arm, dates_exclude$tele)
 
 # Who is mixed in the tele variable here?
-dates_exclude$id[dates_exclude$tele == "3"] # BX-085
+dates_exclude$id[dates_exclude$tele == "3"] # 085
+
 # Look at their data
 sessions[sessions$id == "BX-085", ]
 dates[dates$id == "BX-085", ]
 # They were randomized to in-person (Jan 2020), but never attended any sessions.
 
-# Make their tele 3 to 1 in the full dates data, and do the same for "083" above
+# Make their tele variable from 3 to 1 in the full dates data
 dates$tele[dates$id == "BX-085"] <- "1"
 dates$tele[dates$id == "BX-083"] <- "1"
-```
-
-# Look at TAU data
-```{r tau numbers}
-# The breakdown in the dates data for TAU
-table(dates[dates$arm == 2, ]$tele) 
-# 47 in-person, 50 telehealth, 9 mixed
-
-# Filter the dataset to TAU 
-tau_data_filtered <- plf_data %>%
-  filter(
-    arm_label == "TAU",
-    month != -9
-  )
-
-# Add in tele, dtcon, and dtm00 from "dates"
-tau_data_filtered <- tau_data_filtered %>%
-  left_join(
-    dates %>% select(id, tele, dtcon, dtm00),  
-    by = "id"                                    
-  )
 ```
 
 # Save data for MLMs
@@ -266,6 +463,7 @@ write.csv(
 # 2025-10-21: First filtered multi-wave data
 # 2025-12-15: Add C-SSRS
 # 2026-01-12: Make/add new attendance variable
+# 2026-05-12: (Re)tabulate attendance variables with different logic
 ```
 
 # Save data for ITT engagement/initiation
@@ -276,7 +474,7 @@ dates <- dates %>%
     modality_assign = case_when(
       tele == "1" ~ 0, # in-person
       tele == "2" ~ 1, # telehealth
-      tele == "3" ~ 0, # in person and shifted to telehealth - in person for ITT
+      tele == "3" ~ 0, # in person and shifted to telehealth - in person for ITT (all assigned in-person)
     )
   )
 
@@ -300,15 +498,8 @@ write.csv(
   plf_data_m0_plf,
   paste0("01_Output/initiation_data_sg_", Sys.Date(), ".csv")
 )
-# 2026-01-02: First filtered ITT data for initation/engagement
+# 2026-01-02: First filtered ITT data for initiation/engagement
 # 2026-01-12: Make/add new attendance variable
-```
-
-```{r save tau data, eval=FALSE}
-write.csv(
-  tau_data_filtered,
-  paste0("01_Output/tau_data_sg_", Sys.Date(), ".csv")
-)
-# 2026-01-05: First filtered data
+# 2026-05-12: (Re)tabulate attendance variables with different logic
 ```
 
